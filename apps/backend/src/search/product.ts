@@ -113,13 +113,12 @@ const source = {
     rows: ProductRow[],
     context: SearchTypes.SearchIngestionContext
   ) => {
-    const published = rows.filter((row) => row.status === 'published')
     const pricing = await loadPricing(
-      published.map((row) => row.id),
+      rows.map((row) => row.id),
       context
     )
 
-    return published.map((row) => toDocument(row, pricing.get(row.id)))
+    return rows.map((row) => toDocument(row, pricing.get(row.id)))
   },
 }
 
