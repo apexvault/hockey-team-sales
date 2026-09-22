@@ -1,11 +1,13 @@
 import { retrieveCart } from "@/lib/data/cart"
 import { retrieveCustomer } from "@/lib/data/customer"
+import { SEARCH_PRICE_CURRENCIES } from "@/lib/search-client"
 import AccountButton from "@/modules/account/components/account-button"
 import CartButton from "@/modules/cart/components/cart-button"
 import LocalizedClientLink from "@/modules/common/components/localized-client-link"
 import FilePlus from "@/modules/common/icons/file-plus"
 import LogoIcon from "@/modules/common/icons/logo"
 import { MegaMenuWrapper } from "@/modules/layout/components/mega-menu"
+import Search from "@/modules/layout/components/search"
 import { RequestQuoteConfirmation } from "@/modules/quotes/components/request-quote-confirmation"
 import { RequestQuotePrompt } from "@/modules/quotes/components/request-quote-prompt"
 import SkeletonAccountButton from "@/modules/skeletons/components/skeleton-account-button"
@@ -13,7 +15,11 @@ import SkeletonCartButton from "@/modules/skeletons/components/skeleton-cart-but
 import SkeletonMegaMenu from "@/modules/skeletons/components/skeleton-mega-menu"
 import { Suspense } from "react"
 
-export async function NavigationHeader() {
+export async function NavigationHeader({
+  currencyCode = SEARCH_PRICE_CURRENCIES[0],
+}: {
+  currencyCode?: string
+}) {
   const customer = await retrieveCustomer().catch(() => null)
   const cart = await retrieveCart()
 
@@ -43,15 +49,7 @@ export async function NavigationHeader() {
             </nav>
           </div>
           <div className="flex justify-end items-center gap-2">
-            <div className="relative mr-2 hidden small:inline-flex">
-              <input
-                disabled
-                type="text"
-                placeholder="Search for products"
-                className="bg-gray-100 text-zinc-900 px-4 py-2 rounded-full pr-10 shadow-borders-base hidden small:inline-block hover:cursor-not-allowed"
-                title="Install a search provider to enable product search"
-              />
-            </div>
+            <Search currencyCode={currencyCode} />
 
             <div className="h-4 w-px bg-neutral-300" />
 
