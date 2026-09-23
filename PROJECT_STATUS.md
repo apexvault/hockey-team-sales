@@ -4,7 +4,7 @@
 
 - Phase: Day 0 — Foundation and Audit
 - State: **COMPLETE** (2026-09-23)
-- Overall beta completion: **~15–20%** of the hockey beta path (method and
+- Overall beta completion: **~12–18%** of the hockey beta path (method and
   confidence in `DAY_0_AUDIT.md` §10). Hockey-specific code: **0%**.
 - Current owner blocker: 7 owner gates open (see below) — none block the first P0 task
 - Production status: No deployment authorized; **no deployment mechanism exists**
@@ -20,7 +20,7 @@
 | Agent structure and guardrails | **DONE** | 8 specialist roles; independent QA enforced; no self-approval |
 | Backlog reconciliation | **DONE** | `DAY_0_BACKLOG.md` — 4 waves, dependency-aware, critical path identified |
 | Baseline tests/build | **DONE (with failures recorded)** | install PASS · lint PASS · migrate PASS · build PASS *after P0-1 fix* · **tests 15/15 FAIL** · typecheck **does not exist** |
-| Security/permission baseline | **DONE** | **21 findings, 7 CRITICAL**; `DAY_0_AUDIT.md` §7 |
+| Security/permission baseline | **DONE** | **26 findings, 8 CRITICAL** (5 added by independent QA); `DAY_0_AUDIT.md` §7 |
 | Launch forecast | **DONE** | See below |
 
 ## Baseline command results
@@ -47,6 +47,8 @@
    both shipped undetected.
 5. **No deployment, backup, monitoring, or rollback mechanism exists anywhere.**
 6. Artwork/proof/roster/production are ~0% built and sit on the critical path.
+7. **Workflow compensation handlers grant global `company_admin` on rollback**
+   (F-22) — privilege escalation triggered by an error path.
 
 ## Owner gates open
 
@@ -60,19 +62,40 @@
 
 ## Beta forecast
 
-Evidence-based, assuming the owner gates are answered promptly and the waves in
-`DAY_0_BACKLOG.md` are respected:
+Stated in **engineer-weeks** first, because a calendar figure is meaningless
+without headcount. Revised after independent QA challenged the original estimate
+as optimistic.
 
-- **Wave 0** (trustworthy baseline: CI, authorization, tests): **2–3 weeks**
-- **Wave 1** (team model, storage, notifications, artwork/proof, roster, pipeline): **6–9 weeks**
-- **Wave 2** (commercial rules, payments, credit, tiers): **4–6 weeks**
-- **Wave 3–4** (leverage, QA, staging, rollback): **4–6 weeks**
+| Wave | Scope | Engineer-weeks |
+|---|---|---|
+| 0 | Trustworthy baseline: CI, authorization rework across ~20 routes, repair 15 tests, negative permission tests | 10–16 |
+| 1 | Team model, file storage, notifications, artwork/proof, roster, order pipeline, staff roles | 24–36 |
+| 2 | Commercial rules, payment provider, credit, discount tiers, US/CA regions | 14–20 |
+| 3–4 | Operating leverage, QA, a11y, staging, backups/rollback | 14–20 |
+| | **Subtotal** | **62–92** |
+| | **Contingency (25%)** — MEDIUM confidence, 7 unanswered owner gates | +16–23 |
+| | **Total** | **78–115 engineer-weeks** |
 
-**Range: 16–24 weeks to a defensible beta. Confidence: MEDIUM.**
+### Calendar translation (assumption must be chosen by the owner)
 
-Drivers of the spread: the seven owner gates (3 of which block entire waves), the
-depth of the authorization rework, and the fact that artwork/proof/roster are
-net-new domain modelling with no structural ancestor in the starter.
+| Team | Calendar estimate |
+|---|---|
+| **1–2 engineers** | **30–40 weeks** |
+| **3–4 engineers + dedicated security and QA reviewers** | **24–32 weeks** |
+
+**Recommended planning figure: 24 weeks is the credible floor**, and only with a
+team of 3–4 plus independent reviewers. The earlier "16 weeks" figure was a
+straight sum of best cases with no contingency, while the waves are explicitly
+serialised — it is withdrawn.
+
+**Confidence: MEDIUM.** Drivers of the spread:
+- **Owner-gate latency is unmodelled.** Three of the seven gates block entire
+  waves and none are answered. Historically the largest source of slip.
+- Wave 0 is the most aggressive line item: a structural authorization rework with
+  independent review is 2–3 engineer-weeks on its own, before the 15 broken tests,
+  CI with a Postgres service *and* a booted backend, and the negative-test suite
+  that five Wave 0 tasks name as acceptance.
+- Artwork/proof/roster are net-new domain modelling with no structural ancestor.
 
 This forecast assumes no production deployment occurs without explicit approval.
 

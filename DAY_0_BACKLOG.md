@@ -53,8 +53,13 @@ until Wave 0 passes independent review.
   `corepack enable` → `pnpm install --frozen-lockfile` → `pnpm lint` → `pnpm build`
   → backend tests, with a **Postgres service container** and a step that boots the
   backend before the storefront build (per P0-1's constraint).
-- **Acceptance:** a deliberately broken import fails CI; a clean branch passes.
-- **Dependencies:** P0-1, P0-INF-2. **Blocks:** everything after Wave 0.
+- **Also in scope:** the route-verb authorization coverage check required by
+  P0-SEC-2's acceptance (a `route.ts` exporting a verb with no matching
+  authorization entry must fail CI).
+- **Acceptance:** a deliberately broken import fails CI; a deliberately unguarded
+  route verb fails CI; the repaired test suite (P0-2) runs green in CI; a clean
+  branch passes.
+- **Dependencies:** P0-1, P0-INF-2, P0-2. **Blocks:** everything after Wave 0.
 - **Risk:** M · **Files:** `.github/workflows/` · **Review:** DevOps + QA.
 
 ---
@@ -69,7 +74,8 @@ until Wave 0 passes independent review.
   test scripts, which currently fail on Windows with `'TEST_TYPE' is not recognized`.
 - **Acceptance:** documented steps work from a clean clone on Windows and Linux;
   `pnpm typecheck` runs and reports.
-- **Blocks:** P0-INF-1. **Risk:** L · **Review:** DevOps.
+- **Blocks:** P0-INF-1. **Risk:** L · **Review:** DevOps **+ QA** (independent —
+  the implementer may not be the sole reviewer).
 
 ---
 
@@ -87,10 +93,24 @@ until Wave 0 passes independent review.
   create the first employee inside `createCompaniesWorkflow` server-side. Stop
   treating `user_metadata.role` as an authorization source. Null-guard
   `providerIdentity` (today it throws → **500 instead of 403**).
+- **Also in scope — audit workflow COMPENSATION handlers, not just forward paths
+  (F-22, critical):** `remove-admin-role.ts:40-53` unconditionally sets
+  `role: "company_admin"` on rollback, so a failed demotion **promotes** the user to
+  global admin. The mirror defect at `set-admin-role.ts:75-88` sets `role: null`,
+  silently stripping a legitimate admin. Compensation must restore the *prior*
+  value, not a hardcoded one.
+- **Also in scope (F-23):** `ensureRole` on matchers with no `:id` issues
+  `filters: { id: undefined }`, which does not filter — `company` binds to an
+  arbitrary row, and if that row has no employees the bypass fires for **every**
+  caller. Never invoke the middleware on a matcher lacking the param it reads.
+- **Also in scope (F-24, F-26):** null-guard `remove-admin-role.ts:31`; reconcile the
+  `:employee_id` matcher vs. `[employeeId]` directory mismatch
+  (`store/companies/middlewares.ts:95,105`) before the new middleware reads that param.
 - **Acceptance:** negative tests prove Team A cannot read/modify/delete Team B for
   **every** `/store/companies/**` and `/store/approvals/**` route; a brand-new
   registrant has authority over their own company only; missing provider identity
-  returns 403, not 500.
+  returns 403, not 500; **a forced mid-workflow failure during demotion leaves the
+  user's role no higher than before** (F-22 regression test).
 - **Risk:** **H** · **Files:** `api/middlewares/ensure-role.ts`,
   `api/store/companies/middlewares.ts`, `api/store/approvals/middlewares.ts`,
   `workflows/company/`, `workflows/employee/`
@@ -114,8 +134,8 @@ until Wave 0 passes independent review.
   exports a verb with no matching authorization entry** — this bug class will
   otherwise recur.
 - **Acceptance:** negative tests for each verb; the CI check fails on a
-  deliberately unguarded verb.
-- **Dependencies:** P0-SEC-1 · **Risk:** **H** · **Review:** **Security + QA.**
+  deliberately unguarded verb (the check itself is built in P0-INF-1).
+- **Dependencies:** P0-SEC-1, P0-INF-1 · **Risk:** **H** · **Review:** **Security + QA.**
 
 ---
 
@@ -175,7 +195,11 @@ until Wave 0 passes independent review.
   hardcoded `"supersecret"` JWT value; remove committed debug logging
   (`console.log("vic logs …")` in `companies.spec.ts:35,37`).
 - **Constraint:** **do not weaken assertions to force a pass.**
-- **Acceptance:** 15/15 pass locally and in CI.
+- **Acceptance:** 15/15 pass **locally**. (CI-green is deliberately *not* part of
+  this task's acceptance — CI is P0-INF-1, which P0-2 blocks; requiring it here
+  would create a cycle.)
+- **Scope note:** remove all three `"vic logs"` statements — `companies.spec.ts:35,37`
+  **and `:234`**.
 - **Dependencies:** P0-INF-2 · **Blocks:** P0-INF-1 · **Risk:** M
 - **Review:** QA — **implementer may not self-approve.**
 
@@ -192,8 +216,8 @@ until Wave 0 passes independent review.
   `NEXT_PUBLIC_PAYPAL_CLIENT_ID` to `.env.template` (read by code, absent from the
   template); blank the committed `REVALIDATE_SECRET=supersecret`.
 - **Acceptance:** an empty secret fails startup in every environment; a test
-  `.env.*` file cannot be staged.
-- **Risk:** M · **Review:** Security.
+  `.env.*` file cannot be staged; both `.env.template` files remain tracked.
+- **Risk:** M · **Review:** Security **+ QA** (independent).
 
 ---
 
@@ -241,7 +265,14 @@ Start only after Wave 0 passes independent review.
   **mandatory**; today **no notification provider is registered** and
   `src/subscribers/` is empty, so nothing can be delivered.
 - **Owner gate:** provider choice.
-- **Dependencies:** P0-DATA-1 · **Blocks:** invitations, reminders, order comms
+- **Acceptance:** a notification module is registered in `medusa-config.ts`; a
+  subscriber exists in `src/subscribers/` (today the directory holds only a README)
+  and fires on order placement; an integration test asserts the notification module
+  was invoked with the expected recipient and template; one real end-to-end send is
+  demonstrated in a non-production environment.
+- **Dependencies:** none — provider registration does not require the team account
+  model, so this runs in parallel with P0-DATA-1.
+- **Blocks:** invitations, reminders, order comms
 - **Risk:** M · **Review:** DevOps + QA.
 
 ---
@@ -319,7 +350,7 @@ Start only after Wave 0 passes independent review.
 | P1-COM-2 | **Lifetime-spend discount tiers** ($1k/2%, $5k/7%, $20k/10%, $100k/20%) — reuse customer_group→price_list as the *mechanism*; build the missing *driver* (spend accumulator + tier job). `src/jobs/` is empty | P0-DATA-1 | M | Product + Data + QA |
 | P1-COM-3 | **Company credit limit** — extend the existing server-side hook rather than adding a second gate; semantics differ from `spending_limit` (revolving balance vs. periodic cap) | P0-SEC-5, P0-DATA-1 | H | Security + QA + **owner gate: credit policy** |
 | P1-COM-4 | **Payment provider** — no backend provider is registered; checkout cannot charge a card | — | H | **Owner gate** + Security |
-| P1-COM-5 | **US/CA regions** — seed is EU-only (`gb,de,dk,se,fr,es,it`); also make the seed **idempotent** (it currently has no existence checks and will collide on SKUs) | — | L | Data + QA |
+| P1-COM-5 | **US/CA regions** — seed is EU-only (`gb,de,dk,se,fr,es,it`) and creates `usd` prices with **no USD region** (unreachable dead data). Also needs a US/CA tax region, shipping profile, fulfillment set and stock location (all built EU-only today, incl. a `"European Warehouse"`). Make the seed **idempotent** — it has no existence checks and will collide on SKUs | — | **M** | Data + QA |
 | P1-COM-6 | Saved designs + reorder — upgrade `previously-purchased` from variant-level to design-level | P0-DATA-2 | M | Product + QA |
 
 ---
@@ -341,14 +372,16 @@ Start only after Wave 0 passes independent review.
 
 | ID | Task | Dependencies | Risk |
 |---|---|---|---|
-| P1-QA-1 | **Negative permission test suite** covering every TEST_PLAN required negative test — cross-tenant access, role escalation, price/discount tampering, credit bypass, wrong-version approval, unsafe upload, unauthorized status mutation | Wave 0 | H |
-| P1-QA-2 | **Accessibility remediation** — fix the systemic `Input` `htmlFor`/`id` mismatch affecting ~14 forms; label icon-only buttons; raise `text-neutral-400` label contrast above 4.5:1; add semantic landmarks | — | M |
-| P1-QA-3 | Mobile/desktop workflow evidence for every beta path step (MASTER_SPEC acceptance requirement) | Waves 1–3 | M |
-| P1-QA-4 | Rebrand — remove hardcoded Medusa branding **and the Medusa Cloud promo banner rendered on every page** (`(main)/layout.tsx`) | — | L |
-| P1-REL-1 | Staging deployment to DreamHost — **nothing exists today** (no Dockerfile/Procfile/nginx/PM2); note the storefront build needs a live backend | P0-INF-1 | H (owner gate) |
-| P1-REL-2 | Backups, monitoring, rollback runbook — all three are currently aspirational text only | P1-REL-1 | H |
-| P1-REL-3 | Harden `update.yaml` — pin actions to SHAs (currently mutable `@v1`/`@v3` tags with `contents:write` and an `ANTHROPIC_API_KEY`) | — | M |
-| P2-DATA-1 | Add missing indexes (`quote.customer_id`, `quote.cart_id`, `approval.cart_id`, `approval_status.cart_id`); unique constraint on `company.email`; clean up stale MikroORM snapshots | P0-DATA-1 | L |
+| ID | Task | Dependencies | Risk | Acceptance | Review |
+|---|---|---|---|---|---|
+| P1-QA-1 | **Negative permission test suite** covering every TEST_PLAN required negative test — cross-tenant access, role escalation, price/discount tampering, credit bypass, wrong-version approval, unsafe upload, unauthorized status mutation | Wave 0, **P0-DATA-2, P0-DATA-4, P0-ROLE-1** (cannot test permissions on features that do not exist) | H | Every TEST_PLAN negative test present and failing-closed | Security + QA |
+| P1-QA-2 | **Accessibility remediation** — fix the systemic `Input` `htmlFor`/`id` mismatch affecting ~14 forms; label icon-only buttons; raise `text-neutral-400` label contrast above 4.5:1; add semantic landmarks | — | M | Automated a11y scan clean on the beta path; labels programmatically associated | UI/UX + QA |
+| P1-QA-3 | Mobile/desktop workflow evidence for every beta path step | P1-OPS-1..5 complete | M | Screenshot/recorded evidence per step at mobile + desktop viewports | QA |
+| P1-QA-4 | Rebrand — remove hardcoded Medusa branding **and the Medusa Cloud promo banner rendered on every page** (`(main)/layout.tsx`) | — | L | No Medusa branding renders anywhere | UI/UX |
+| P1-REL-1 | Staging deployment to DreamHost — **nothing exists today** (no Dockerfile/Procfile/nginx/PM2); the storefront build needs a live backend | P0-INF-1, **P1-QA-1** | H (owner gate) | A named commit deploys to staging by a documented, repeatable procedure | DevOps + QA |
+| P1-REL-2 | Backups, monitoring, rollback runbook | P1-REL-1 | H | **A restore drill is performed and evidenced**, and a rollback to the prior release is demonstrated — asserted "done" is not acceptable | DevOps + QA |
+| P1-REL-3 | Harden `update.yaml` — pin actions to SHAs (currently mutable `@v1`/`@v3` tags with `contents:write` and an `ANTHROPIC_API_KEY`) | — | M | All actions SHA-pinned; permissions minimised | Security |
+| P2-DATA-1 | Add missing indexes (`quote.customer_id`, `quote.cart_id`, `approval.cart_id`, `approval_status.cart_id`); unique constraint on `company.email`; clean up stale MikroORM snapshots | P0-DATA-1 | L | Indexes present; migration reversible | Data + QA |
 
 ---
 
@@ -361,22 +394,38 @@ reliable · broader soft-goods categories.
 
 ## Critical path to beta
 
+Every edge below is also declared in the task tables above — the diagram asserts
+nothing on its own.
+
 ```
-P0-INF-2 ─┬─ P0-2 ──┐
-          └─ P0-INF-1 ──┐
-P0-SEC-1 ──┬── P0-SEC-2 ─┼─→ P0-DATA-1 ─┬─ P0-INF-3 ─→ P0-DATA-2 ─→ P1-OPS-2
-           ├── P0-SEC-3  │              ├─ P0-INF-4 ─→ P1-COM-1
-           ├── P0-SEC-4  │              ├─ P0-DATA-3
-           └── P0-SEC-5  │              └─ P0-DATA-4 ─→ P1-OPS-1/3/5
-                         └─→ P0-ROLE-1
-                                        → P1-QA-1 → P1-REL-1 → P1-REL-2
+P0-INF-2 ──→ P0-2 ──→ P0-INF-1 ──→ P0-SEC-2
+                                       │
+P0-SEC-1 ──┬── P0-SEC-2 ───────────────┘
+           ├── P0-SEC-3
+           ├── P0-SEC-4
+           ├── P0-SEC-5
+           ├── P0-ROLE-1 ──────────────┐
+           └── P0-DATA-1 ─┬─ P0-INF-3 ─┼─→ P0-DATA-2 ─→ P1-OPS-2
+                          ├─ P0-DATA-3 │
+                          └─ P0-DATA-4 ┴─→ P1-QA-1 ─→ P1-REL-1 ─→ P1-REL-2
+
+P0-INF-4 (independent; parallel with P0-DATA-1) ──→ P1-COM-1
 ```
 
-**The longest chain is:**
-`P0-SEC-1 → P0-DATA-1 → P0-INF-3 → P0-DATA-2 → P1-OPS-2 → P1-QA-1 → P1-REL-1 → P1-REL-2`
+**Longest chain (8 nodes):**
+`P0-INF-2 → P0-2 → P0-INF-1 → P0-SEC-2 → P0-DATA-1 → P0-INF-3 → P0-DATA-2 → P1-QA-1 → P1-REL-1 → P1-REL-2`
 
-Artwork/proof is the critical path, because it is both the largest net-new domain
-area and a hard dependency of the collaboration and reorder features.
+Two chains compete for longest and both must be tracked:
+1. **Toolchain → CI → route authorization** (above), because P0-SEC-2's acceptance
+   depends on a CI check that only exists after P0-INF-1.
+2. **Authorization → team model → storage → artwork/proof**, because artwork/proof
+   is the largest net-new domain area and a hard dependency of collaboration,
+   reorder, and the negative-test suite.
+
+`P1-QA-1` depends on `P0-DATA-2`, `P0-DATA-4`, and `P0-ROLE-1` as well as Wave 0 —
+permissions cannot be negatively tested on features that do not yet exist — and
+`P1-REL-1` depends on `P1-QA-1`, since staging should not receive a build whose
+permission tests have not run.
 
 ---
 

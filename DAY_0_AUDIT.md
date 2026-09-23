@@ -145,15 +145,15 @@ All 15 tests in all 3 suites fail. Root cause traced through the fixtures:
 
 - `integration-tests/utils/seeder.ts:1-9` — `regionSeeder` creates a region with
   **no `countries`** (the string `countries` appears nowhere in `integration-tests/`).
-- `integration-tests/utils/seeder.ts:55-70` — `cartSeeder` then posts a shipping
+- `integration-tests/utils/seeder.ts:47-70` — `cartSeeder` then posts a shipping
   address with `country_code: "us"`.
 - `POST /store/carts` rejects with **400**.
 
 Secondary defects found in the same files:
-- `integration-tests/utils/admin.ts:45` signs tokens with `process.env.JWT_SECRET`
+- `integration-tests/utils/admin.ts:46` signs tokens with `process.env.JWT_SECRET`
   while the specs inject `JWT_SECRET: "supersecret"` — the suite only works if the
   ambient env happens to match that hardcoded value.
-- `companies.spec.ts:35,37` contain committed debug logging (`console.log("vic logs …")`).
+- `companies.spec.ts:35,37,234` contain committed debug logging (`console.log("vic logs …")`).
 
 **Not fixed in Day 0, by design.** AGENT_RULES forbids weakening tests to force a
 pass, and repairing fixtures is implementation work requiring independent review.
@@ -182,13 +182,20 @@ acceptance principle, **no feature can currently be marked DONE.**
   `payment-wrapper/index.tsx` but absent from `.env.template`**.
 - `REVALIDATE_SECRET=supersecret` is a committed, guessable default.
 - `check-env-variables.js` validates only 1 of the `NEXT_PUBLIC_*` vars used.
-- **`.gitignore` covers `**/.env` and `**/.env.local` but NOT `.env.test`,
-  `.env.production`, `.env.staging`** — Medusa's jest setup loads `.env.test`, so a
-  developer creating one would commit it silently. Fixed on this branch.
+- **`.gitignore` covered `**/.env` and `**/.env.local` but NOT `.env.test`,
+  `.env.production`, `.env.staging`** — Medusa's jest setup loads `.env.test`.
+  **This was a live near-miss, not a hypothetical:** running the baseline required
+  creating `apps/backend/.env.test` containing database credentials, and under the
+  original `.gitignore` that file was *not* ignored. Fixed on this branch before any
+  commit; verified no `.env` file exists in any commit on any ref, and both
+  `.env.template` files remain tracked.
 
 ---
 
-## 7. Security and tenant isolation — 21 findings
+## 7. Security and tenant isolation — 26 findings (8 critical)
+
+> F-22 … F-26 were added by the independent QA reviewer, who verified the original
+> 21 and found five more. F-22 is critical.
 
 Audited independently of the implementation pass. In this product a "company" is a
 **hockey team**, so cross-company leakage means cross-team leakage, and rosters
@@ -199,8 +206,9 @@ contain minors' data.
 | ID | Finding | Evidence |
 |---|---|---|
 | **F-01** | **Every user who signs up becomes a global `company_admin`.** `ensure-role.ts:25` waives the role check when a company has 0 employees; the storefront signup flow (`lib/data/customer.ts:95-113`) creates a company then adds the user as `is_admin`, which writes `user_metadata.role = "company_admin"`. That role is **never company-scoped** (`ensure-role.ts:37`), so it grants admin over **every** team. | `api/middlewares/ensure-role.ts:17-41` |
-| **F-02** | `DELETE /store/companies/:id` has **no authorization middleware at all** — the verb is exported and therefore routed, but `middlewares.ts` defines only GET/POST. Any authenticated user can delete any team. | `store/companies/[id]/route.ts:60-70` |
-| **F-03** | `DELETE /store/companies/:id/employees/:employeeId` — same class; handler ignores the company segment and deletes by employee id alone. | `.../[employeeId]/route.ts:73-86` |
+| **F-02** | `DELETE /store/companies/:id` has **no authorization middleware** — the verb is exported and therefore routed, but `middlewares.ts` defines entries only for GET/POST. *Authentication does apply* via the `ALL /store/companies*` matcher; authorization does not. So any **authenticated** user — i.e. anyone who signs up — can delete any team. | `store/companies/[id]/route.ts:60-70`; `middlewares.ts:23-27` |
+| **F-03** | `DELETE /store/companies/:id/employees/:employeeId` — same class (authenticated, unauthorized); handler ignores the company segment and deletes by employee id alone. | `.../[employeeId]/route.ts:73-86` |
+| **F-22** | **Workflow compensation grants global `company_admin`.** `remove-admin-role.ts:40-53` — the rollback handler **unconditionally** sets `user_metadata.role = "company_admin"`, regardless of the prior value. `updateEmployeesWorkflow` runs `removeAdminRoleStep` whenever `is_admin === false`; if any later step fails, the rollback **promotes** the demoted user to admin over **every** team (per F-01's global-role semantics). Privilege escalation via an error path. The mirror defect at `set-admin-role.ts:75-88` sets `role: null`, silently stripping a legitimate admin. | `workflows/employee/steps/remove-admin-role.ts:40-53` |
 | **F-04** | `POST /store/companies/:id` has neither `ensureRole` **nor body validation** — the handler spreads raw `req.body` into the update workflow. Any user can rewrite any team's billing email, address, or currency. | `store/companies/[id]/route.ts:31-58` |
 | **F-05** | `POST /store/quotes/:id/accept` never verifies quote ownership — anyone with a quote ID can commit another team to a live order. (Contrast: `GET /store/quotes/:id` *is* correctly scoped.) | `customer-accept-quote.ts:17-48` |
 | **F-06** | **Purchase approval is enforced only in the React UI.** The server checks "is there a pending approval record?", never "does this company require approval?". Skipping the client call to `/store/carts/:id/approvals` and going straight to `/complete` bypasses approval entirely. | `workflows/hooks/validate-cart-completion.ts:20-25` |
@@ -228,6 +236,19 @@ contain minors' data.
 - **F-17** — `ensureRole` runs on `/store/approvals*` where `req.params.id` is
   undefined; also dereferences `providerIdentity` with no null guard → **500 instead
   of 403** (fail-open decided by an unhandled exception).
+- **F-23** *(amplifies F-17)* — on `GET /store/approvals` the `filters: { id: undefined }`
+  does not filter, so `company` binds to whichever company row comes back first. If
+  that company has zero employees, `ensure-role.ts:25` returns `next()` **for every
+  caller on every request**. The bypass is data-dependent and therefore intermittent,
+  which makes it harder to detect, not less severe.
+- **F-24** — `remove-admin-role.ts:31` dereferences `providerIdentity.id` with no
+  null guard (same class as F-17) → 500.
+- **F-25** — `validate-cart-completion.ts:10-18` does not guard `queryCart`; a
+  deleted or unknown cart makes line 28 throw a raw `TypeError` → 500.
+- **F-26** *(latent trap)* — `store/companies/middlewares.ts:95,105` declare matchers
+  with `:employee_id` while the route directory is `[employeeId]`. Harmless today
+  because `ensureRole` reads only `req.params.id`, but the replacement
+  `ensureCompanyAccess` will silently receive `undefined` for the employee id.
 - **F-18** — all admin users are equal; no scoping, and `GET /admin/approvals`
   returns every company's data to any staff login.
 - **F-19** — no upload capability exists at all (only a `TODO` comment).
@@ -259,6 +280,12 @@ read a tenant id from `req.params` or `req.body`**.
   MASTER_SPEC targets **US and Canada**. Seed is also **non-idempotent** (no
   existence checks; re-running will collide on SKUs) and **unreferenced anywhere**
   except as a migration script.
+  Confirmed against the live database: exactly one region, `Europe | eur`.
+  Worse, the seed creates **`usd` prices throughout with no USD region**, so those
+  prices are unreachable dead data. Migrating to US/CA therefore also requires a
+  tax region, shipping profile, fulfillment set, and stock location (the seed builds
+  all of these EU-only, including a `"European Warehouse"`) — so this is **not** the
+  low-risk change it first appears.
 - **Missing indexes** on `quote.customer_id`, `quote.cart_id`, `approval.cart_id`,
   `approval_status.cart_id` — only `deleted_at` is indexed on those tables, while
   `employee.company_id` and `message.quote_id` *are* indexed. Inconsistent.
@@ -282,7 +309,7 @@ read a tenant id from `req.params` or `req.body`**.
 - Responsive coverage is uneven: `account` 31 breakpoint usages, `cart` 17,
   `layout` 16 — but **`modules/quotes` and `modules/common` have 0**.
 - **Accessibility defect (systemic):** the shared `Input`
-  (`modules/common/components/input/index.tsx:56-75`) has
+  (`modules/common/components/input/index.tsx:58-75`) has
   `<label htmlFor={name}>` but the input sets only `name`, never `id` — labels are
   **not programmatically associated** in ~14 forms. A JS focus handler masks it
   visually. Also: only 4 `aria-label`s repo-wide, icon-only close buttons unlabeled,
@@ -300,25 +327,25 @@ the **hockey** requirement met. Medusa generics earn partial credit only.
 
 | Step | Score |
 |---|---|
-| 1 Lead / account creation | 50 |
+| 1 Lead / account creation | 25 |
 | 2 Product & pricing selection | 55 |
 | 3 Quote creation & acceptance | 75 |
 | 4 Artwork upload & designer collaboration | 10 |
 | 5 Proof review & approval | 5 |
 | 6 Roster & personalization | 0 |
-| 7 Payment / approved credit | 35 |
+| 7 Payment / approved credit | 15 |
 | 8 Production handoff & status tracking | 10 |
 | 9 Shipment / delivery confirmation | 40 |
 | 10 Reorder from saved designs | 15 |
-| **Raw weighted total** | **29.5%** |
+| **Raw weighted total** | **25.0%** |
 
-**Reported figure: ~15–20%. Confidence: MEDIUM-HIGH.**
+**Reported figure: ~12–18%. Confidence: MEDIUM-HIGH.**
 
 Three adjustments pull the raw number down:
 1. **The remaining 70% is the harder 70%.** Steps 4, 5, 6, 8 are net-new domain
-   modelling with no structural ancestor. Effort-weighted ≈ **20%**.
+   modelling with no structural ancestor. Effort-weighted ≈ **18%**.
 2. **The acceptance principle is met nowhere** — 0 passing tests, 0 negative
-   permission tests, and 7 critical authorization defects. Under a strict gate ≈ **15%**.
+   permission tests, and 7 critical authorization defects. Under a strict gate ≈ **12%**.
 3. **Infrastructure blockers sit under multiple steps**: no file storage (blocks 4,
    5, 10), no notifications (blocks the *mandatory* email requirement), no payment
    provider (blocks 7), EU-only seed data (spec requires US/CA).
@@ -379,7 +406,7 @@ a REPLACE.
 |---|---|
 | `ARCHITECTURE.md` | **Conflict: Prisma.** Actual ORM is MikroORM. Also "Docker and NGINX where already used" — neither is present. Corrected in this report; ARCHITECTURE.md left intact as the stated *preference*, with the conflict recorded here and in DECISIONS.md. |
 | `PROJECT_STATUS.md` | Updated — all trackers moved off NOT STARTED with evidence. |
-| `DECISIONS.md` | Added D-008..D-013 as **Proposed** (not approved). |
+| `DECISIONS.md` | Added D-008..D-014 as **Proposed** (not approved). |
 | `BETA_BACKLOG.md` | Superseded in detail by `DAY_0_BACKLOG.md`; left as the strategic view. |
 | `CLAUDE_START_DAY_0.md` | Instructed reading `DAY_0/…`; the documents are actually at the repo root. No `DAY_0/` directory exists. Noted, not "fixed". |
 | `TEST_PLAN.md` | Baseline commands now filled in by §3. |
@@ -399,3 +426,49 @@ a REPLACE.
 
 No production deployment, production data change, credential rotation, purchase,
 or destructive deletion was performed.
+
+---
+
+## 14. Independent QA review
+
+An independent QA/Release reviewer — which did not produce any of the audited work —
+was tasked with **falsifying** this report. It fact-checked 40+ load-bearing claims
+against the repository and the live database.
+
+**Verdict: PASS WITH CORRECTIONS.** No REJECT-level defect. Nothing checked came
+back WRONG.
+
+Independently confirmed: the zero-divergence claim (`0 0`); the full F-01 exploit
+chain; the missing `DELETE` middleware entries; F-06 failing open; F-14's always-zero
+prior spend; the absence of CI, `typecheck`, and a working `test` task; EU-only seed
+regions (re-verified against the live database); the dependency fix; 162 tables and
+all 7 custom module tables; and that no `.env` file is tracked in any commit on any
+ref while both `.env.template` files remain tracked.
+
+Two items could not be verified because the reviewer's own read-only mandate forbade
+running them — the `install`/`lint`/`build` results and the `GET /health` probe.
+Both are recorded here as executed by the orchestrator.
+
+### Corrections applied in response
+
+| # | Correction | Where |
+|---|---|---|
+| 1 | **New critical finding F-22** — compensation handlers grant global `company_admin` on rollback. Verified directly before accepting. | §7, P0-SEC-1 |
+| 2 | F-23…F-26 added (undefined-filter bypass amplification, two null-guard 500s, matcher/param mismatch) | §7 |
+| 3 | F-02/F-03 reworded — authentication *does* apply; authorization does not. A security finding must not overstate its preconditions. | §7 |
+| 4 | Broke the P0-2 ↔ P0-INF-1 acceptance cycle | `DAY_0_BACKLOG.md` |
+| 5 | Critical path reconciled with the dependency tables — two edges had been asserted only in the diagram | `DAY_0_BACKLOG.md` |
+| 6 | P0-INF-4 given acceptance criteria and un-blocked from P0-DATA-1 | `DAY_0_BACKLOG.md` |
+| 7 | Forecast restated in engineer-weeks with a declared team assumption and 25% contingency; the 16-week figure is **withdrawn** | `PROJECT_STATUS.md` |
+| 8 | Second reviewers added to P0-INF-2 and P0-SEC-6; acceptance + review owners added to all Wave 4 tasks, incl. an evidenced **restore drill** for P1-REL-2 | `DAY_0_BACKLOG.md` |
+| 9 | Completeness scores corrected — step 1 (50→25, it is the flow F-01 breaks) and step 7 (35→15, checkout cannot charge). Headline now **12–18%**. P1-COM-5 risk L→M. Line-number drift and `D-008..D-014` fixed. | §10, §12 |
+
+### QA challenges accepted in full
+
+- The original **16–24 week** forecast was a straight sum of best cases with no
+  contingency across explicitly serialised waves, and stated no headcount. Withdrawn
+  and replaced.
+- Scoring "lead/account creation" at 50% was inconsistent with F-01 breaking that
+  exact flow.
+- Scoring "payment" at 35% was inconsistent with this report's own finding that no
+  payment provider is registered.
