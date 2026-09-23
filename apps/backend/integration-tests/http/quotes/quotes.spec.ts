@@ -130,17 +130,16 @@ medusaIntegrationTestRunner({
         );
       });
 
-      it("should throw error when quote does not exist", async () => {
-        const {
-          response: { data },
-        } = await api
+      // P0-SEC-1 behaviour change: 404 -> 403.
+      // The previous 404 body even echoed the requested id back. Quote ids are
+      // now protected the same way company ids are: an unknown quote and
+      // another customer's quote are indistinguishable to the caller.
+      it("returns a uniform denial when the quote does not exist", async () => {
+        const { response } = await api
           .get(`/store/quotes/does-not-exist`, storeHeaders)
           .catch((e) => e);
 
-        expect(data).toEqual({
-          type: "not_found",
-          message: "Quote id not found: does-not-exist",
-        });
+        expect(response.status).toEqual(403);
       });
     });
 

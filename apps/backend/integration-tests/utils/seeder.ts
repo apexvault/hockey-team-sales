@@ -2,7 +2,17 @@ export async function regionSeeder({ api, adminHeaders, data }) {
   return (
     await api.post(
       "/admin/regions",
-      { name: "Test region", currency_code: "usd", ...data },
+      {
+        name: "Test region",
+        currency_code: "usd",
+        // Minimal fixture repair (P0-SEC-1): the region was created with no
+        // countries while `cartSeeder` posts a shipping address with
+        // country_code "us", so every cart creation failed with a 400 and took
+        // all 15 tests down with it. The remaining fixture problems are tracked
+        // separately as P0-2.
+        countries: ["us"],
+        ...data,
+      },
       adminHeaders
     )
   ).data.region;
@@ -25,6 +35,11 @@ export async function productSeeder({ api, adminHeaders, data }) {
       {
         title: `Test Product`,
         handle: `test-product`,
+        // Minimal fixture repair (P0-SEC-1): products default to "draft", and a
+        // draft product's variants are not purchasable -- cart creation failed
+        // with "Variants ... do not exist or belong to a product that is not
+        // published", which is what actually took all 15 tests down.
+        status: "published",
         options: [
           { title: "size", values: ["large", "small"] },
           { title: "color", values: ["green"] },
