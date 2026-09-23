@@ -4,7 +4,10 @@ import {
   ContainerRegistrationKeys,
   MedusaError,
 } from "@medusajs/framework/utils";
-import { assertCartApprovalSatisfied } from "../../utils/assert-cart-approval";
+import {
+  assertCartApprovalSatisfied,
+  resolveApprovalSettings,
+} from "../../utils/assert-cart-approval";
 import { checkSpendingLimit } from "../../utils/check-spending-limit";
 
 /**
@@ -51,11 +54,8 @@ completeCartWorkflow.hooks.validate(async ({ cart }, { container }) => {
     );
   }
 
-  // Approval rule lives in a pure, unit-tested function so the security
-  // property is verifiable without a full checkout fixture.
-  assertCartApprovalSatisfied(queryCart as any);
+  let customer: any = null;
 
-  // Spending limit, evaluated against actual prior spend.
   if (queryCart.customer_id) {
     const { data: customerData } = await query.graph({
       entity: "customer",
@@ -66,6 +66,7 @@ completeCartWorkflow.hooks.validate(async ({ cart }, { container }) => {
         // `spent` was always 0 and the limit only ever compared a single cart
         // total -- a $500 cap permitted unlimited $499 orders.
         "employee.company.spending_limit_reset_frequency",
+        "employee.company.approval_settings.*",
         "orders.total",
         "orders.created_at",
       ],
@@ -74,20 +75,48 @@ completeCartWorkflow.hooks.validate(async ({ cart }, { container }) => {
       },
     });
 
-    const customer = customerData?.[0];
+    customer = customerData?.[0];
+  }
 
-    if (customer?.employee?.spending_limit) {
-      const spendLimitExceeded = checkSpendingLimit(
-        queryCart as any,
-        customer as any
+  /**
+   * Resolve the approval settings that actually govern this cart.
+   *
+   * The cart->company LINK is not a reliable source on its own. It is created
+   * by the cartCreated hook, which only fires at creation and only when the
+   * cart already has a customer. A shopper who adds to cart while logged out
+   * and then signs in gets their customer attached by transferCartCustomer --
+   * a workflow that exposes only a `validate` hook, so nothing re-links the
+   * cart afterwards. That cart reaches checkout with no company link at all.
+   *
+   * Relying on the link alone therefore left the original bypass intact for an
+   * entirely ordinary browse-then-log-in flow: no link, no settings, nothing to
+   * enforce. Falling back to the customer's own employee record makes the
+   * guarantee independent of how and when the cart was created.
+   */
+  const approvalSettings = resolveApprovalSettings(
+    (queryCart as any).company?.approval_settings,
+    customer?.employee?.company?.approval_settings
+  );
+
+  // Approval rule lives in a pure, unit-tested function so the security
+  // property is verifiable without a full checkout fixture.
+  assertCartApprovalSatisfied({
+    approvals: (queryCart as any).approvals,
+    company: { approval_settings: approvalSettings },
+  });
+
+  // Spending limit, evaluated against actual prior spend.
+  if (customer?.employee?.spending_limit) {
+    const spendLimitExceeded = checkSpendingLimit(
+      queryCart as any,
+      customer as any
+    );
+
+    if (spendLimitExceeded) {
+      throw new MedusaError(
+        MedusaError.Types.NOT_ALLOWED,
+        "Cart total exceeds spending limit"
       );
-
-      if (spendLimitExceeded) {
-        throw new MedusaError(
-          MedusaError.Types.NOT_ALLOWED,
-          "Cart total exceeds spending limit"
-        );
-      }
     }
   }
 

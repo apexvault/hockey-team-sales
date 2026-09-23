@@ -407,11 +407,39 @@ export const ensureApprovalAccess = (options: { param?: string } = {}) => {
         return forbid(res);
       }
 
+      /**
+       * Four-eyes, but only where four eyes exist.
+       *
+       * An unconditional self-approval ban deadlocks a single-admin team: only
+       * company admins can decide approvals, the requester is the cart owner,
+       * and there is no store route to withdraw a PENDING approval -- so a
+       * founding coach who is their team's only admin could request approval on
+       * their own cart and then never clear it. Turning the requirement back
+       * off does not help, because a PENDING record blocks completion on its
+       * own. The cart would be permanently un-completable.
+       *
+       * So the ban applies only when the company actually has another admin who
+       * could decide it. Separation of duties is preserved wherever it is
+       * achievable, and never at the cost of bricking checkout.
+       */
       if (
         approval.created_by &&
         approval.created_by === membership.customerId
       ) {
-        return forbid(res);
+        const { data: admins } = await query.graph({
+          entity: "employee",
+          fields: ["id", "is_admin"],
+          filters: { company_id: membership.companyId },
+        });
+
+        const otherAdminExists = (admins ?? []).some(
+          (employee: any) =>
+            employee?.is_admin === true && employee?.id !== membership.employeeId
+        );
+
+        if (otherAdminExists) {
+          return forbid(res);
+        }
       }
 
       return next();

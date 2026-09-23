@@ -5,7 +5,7 @@ Live status of every security finding. The Day 0 evidence record in
 discovered; this file tracks remediation.
 
 - **Discovered:** Day 0 audit (2026-09-23), branch `chore/day-0-baseline-audit`
-- **Last updated:** P0-SEC-1, commit `c3d0d9f`
+- **Last updated:** P0-SEC-1 after independent Security + QA review
 
 | Status | Meaning |
 |---|---|
@@ -54,7 +54,24 @@ client-supplied company id as a claim that must match.
 | ID | Severity | Finding | Status |
 |---|---|---|---|
 | F-27 | **HIGH** | The cart→company link was built from **client-supplied `cart.metadata.company_id`**. Omitting it detached the cart from its company, so approval and spending-limit checks found no settings to enforce — a one-field bypass of a team's purchase controls. Setting it to another id attributed the cart to a team the buyer does not belong to. | **FIXED** — `cart-created.ts` derives the company from the cart's customer |
+| F-29 | **HIGH** | **The first F-27 fix was incomplete.** `cartCreated` fires only at creation and only when the cart already has a customer. A shopper who browses logged out and then signs in has their customer attached by `transferCartCustomer`, which exposes no post-transfer hook — so that cart reaches checkout with no company link and no settings to enforce. The original bypass survived through a completely ordinary flow. Found independently by both reviewers. | **FIXED** — enforcement resolves the company from the cart's customer when the link is absent (`resolveApprovalSettings`), so the guarantee no longer depends on the cart's lifecycle |
 | F-28 | MEDIUM | Same defect on the order→company link (`order.metadata.company_id`), corrupting per-team order history and spend attribution. | **FIXED** — `order-created.ts` derives from the order's customer |
+
+---
+
+## Found by independent review of P0-SEC-1
+
+The security reviewer **rejected** the first implementation; the QA reviewer
+passed it with corrections. Both are addressed below.
+
+| ID | Severity | Finding | Status |
+|---|---|---|---|
+| F-30 | **MEDIUM** | **Regression introduced by the first implementation.** The unconditional self-approval ban deadlocked single-admin teams: only admins can decide approvals, the requester is the cart owner, there is no route to withdraw a PENDING approval, and a PENDING record blocks completion even after the requirement is switched off. A founding coach could permanently brick their own cart. | **FIXED** — separation of duties now applies only when the company actually has another admin who could decide it |
+| F-31 | MEDIUM | Employee creation returned three distinguishable outcomes (403 absent / 409 affiliated / 200 free), letting any team admin probe an arbitrary customer id for existence and affiliation. | **FIXED** — one uniform 409 for both refusal cases |
+| F-32 | MEDIUM | **Regression introduced by the first implementation.** `GET /store/quotes/:id` re-filtered on the caller's own `customer_id` with `throwIfKeyNotFound`, so the company-admin read the middleware authorises silently returned `404 "Quote id not found: <id>"` — restoring the id-echoing oracle this change set out to remove, and disagreeing with its sibling `/preview`. | **FIXED** — authorization lives in the middleware; the handler returns the uniform 403 |
+| F-33 | MEDIUM | An admin could delete or demote the last member/admin, leaving a team unadministrable or wholly unreachable while its roster, carts and orders — minors' data — remain with nobody able to view or erase them. | **FIXED** — `LAST_EMPLOYEE` / `LAST_ADMIN` guards on both delete and demote |
+| F-34 | MEDIUM | Duplicate employee links were possible via `POST /admin/companies/:id/employees`, which had no affiliation guard. The employee↔customer link is non-list, so a duplicate makes `resolveCompanyMembership` derive an **arbitrary** company — the one way the boundary could yield the wrong tenant. | **PARTIAL** — admin-side guard added; a DB unique constraint is still needed to close the TOCTOU race (**P2-DATA-1**) |
+| F-35 | MEDIUM | No invitation or consent step: an admin can attach any unaffiliated `customer_id` to their roster, after which that person's carts, orders and spending limit are governed by that company. "Verified membership" is not yet a real concept. | **OPEN** — belongs to the invitation flow (**P1-COM-1**) |
 
 ---
 
@@ -66,6 +83,11 @@ client-supplied company id as a claim that must match.
 | F-19 | LOW | No file-upload capability exists (artwork has no foundation). Controls specified in advance. | **P0-INF-3** |
 | F-20 | LOW | `medusa-config.ts` passes an empty `JWT_SECRET` through; Medusa then silently falls back to the literal `"supersecret"` outside production. | **P0-SEC-6** |
 | F-21 | INFO | Storefront `is_admin` gating is UI-only — acceptable now that the server enforces the same rule. | N/A |
+| F-35 | MEDIUM | No invitation/consent step for roster attachment (above). | **P1-COM-1** |
+| F-36 | LOW | `GET /store/free-shipping/prices?cart_id=…` has no authentication and no cart-ownership check, giving anyone with the public publishable key a cart-existence and basket-total oracle. Pre-existing; outside P0-SEC-1's scope. | **P0-SEC-7** (new) |
+| F-37 | LOW | `StoreUpdateApproval.status` is a bare `z.string()`, not a native enum, and `ensureApprovalAccess` ignores `approval.status` — so an already-decided approval can be re-decided. Fails closed against the completion rule, but the column is modelled as an enum. | **P0-SEC-7** (new) |
+| F-38 | LOW | `set-admin-role` still writes a non-company-scoped `role` marker into `user_metadata`. Nothing reads it today, but any future consumer re-opens F-01/F-22. Provider identities are keyed on email, which is not unique across guest/account customers. | **P0-SEC-7** (new) |
+| F-39 | LOW | `deleteEmployeesStep` soft-deletes the employee but does not dismiss the employee↔customer link row. Revocation therefore depends on the query layer excluding soft-deleted rows. **The security reviewer flagged this as the single highest-value thing to confirm empirically** — if it does not hold, a coach removed from a team keeps full admin access. | **P0-SEC-7** (new) — needs a runtime test |
 
 ---
 
@@ -76,7 +98,7 @@ Recorded here so they are not lost; neither is in P0-SEC-1's scope.
 | ID | Finding | Evidence |
 |---|---|---|
 | D-01 | **Test fixtures were the real cause of the "all 15 tests fail" Day 0 finding.** The Day 0 audit attributed it to the region lacking `countries`; that was a genuine defect but **not** the blocker. The actual error was `Variants ... do not exist or belong to a product that is not published` — `productSeeder` created the product without `status: "published"`, so its variants were not purchasable. Both are now fixed. | `integration-tests/utils/seeder.ts` |
-| D-02 | `POST /store/quotes` produces a draft-order line item with `unit_price: null` where the source cart item has `unit_price: 100`, failing an existing assertion. **Proven pre-existing**: re-running the suite against unmodified source with only the fixture repair applied reproduces exactly this one failure (14/15 pass). Quote pricing may be losing the unit price. | `integration-tests/http/quotes/quotes.spec.ts` — tracked under **P0-2** |
+| D-02 | **Corrected by the QA reviewer — my original diagnosis was wrong.** The failing assertion was **not** a `unit_price` defect: `unit_price` is `100` and matches. The `null` I saw was on the nested `items[0].detail` sub-object, where it is normal. The single real mismatch was `summary.difference_sum`, a field **removed from the core order summary in the Medusa 2.19→2.21 upgrades** — `grep -rl difference_sum node_modules/.pnpm/` returns nothing, so no application code could ever produce it. It was a stale test assertion, not a product defect, and there is **no pricing-correctness risk**. Fixed; the suite is now green. | `integration-tests/http/quotes/quotes.spec.ts:94` |
 | D-03 | Remaining P0-2 fixture debt: `integration-tests/utils/admin.ts:46` depends on the ambient `JWT_SECRET` matching the hardcoded `"supersecret"`, and `companies.spec.ts:35,37,234` contain committed `console.log("vic logs …")` debug output. | **P0-2** |
 
 ---

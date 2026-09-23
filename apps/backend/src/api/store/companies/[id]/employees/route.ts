@@ -55,14 +55,15 @@ export const POST = async (
 
   const targetCustomer = existing?.[0];
 
-  if (!targetCustomer) {
-    return res.status(403).json({ message: "Forbidden" });
-  }
-
-  if (targetCustomer.employee?.id) {
+  // Deliberately ONE response for both "no such customer" and "already on a
+  // roster". Distinguishing them let any team admin probe an arbitrary
+  // customer id and learn whether that account exists and whether it is already
+  // affiliated -- the same existence oracle this change removes elsewhere. A
+  // uniform refusal tells the caller only that they may not add this id.
+  if (!targetCustomer || targetCustomer.employee?.id) {
     return res.status(409).json({
-      message: "This customer already belongs to a company.",
-      code: "EMPLOYEE_ALREADY_EXISTS",
+      message: "This customer cannot be added to the company.",
+      code: "EMPLOYEE_NOT_ADDABLE",
     });
   }
 

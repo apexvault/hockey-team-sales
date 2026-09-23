@@ -1,13 +1,15 @@
 import { IAuthModuleService } from "@medusajs/framework/types";
 import { ContainerRegistrationKeys, Modules } from "@medusajs/framework/utils";
 import { createStep, StepResponse } from "@medusajs/framework/workflows-sdk";
+import {
+  roleMirrorCompensationPayload,
+  withoutRole,
+  type RoleMirrorCompensation,
+} from "./role-mirror";
 
 type RemoveAdminRoleInput = { email: string };
 
-type RemoveAdminRoleCompensation = {
-  providerIdentityId: string;
-  previousMetadata: Record<string, unknown> | null;
-} | null;
+type RemoveAdminRoleCompensation = RoleMirrorCompensation;
 
 /**
  * Clears the mirrored company_admin marker from the auth provider identity.
@@ -58,13 +60,10 @@ export const removeAdminRoleStep = createStep(
     const previousMetadata =
       (providerIdentity.user_metadata as Record<string, unknown> | null) ?? null;
 
-    const nextMetadata = { ...(previousMetadata ?? {}) };
-    delete (nextMetadata as Record<string, unknown>).role;
-
     await authModuleService.updateProviderIdentities([
       {
         id: providerIdentity.id,
-        user_metadata: nextMetadata,
+        user_metadata: withoutRole(previousMetadata),
       },
     ]);
 
@@ -77,7 +76,10 @@ export const removeAdminRoleStep = createStep(
     compensationData: RemoveAdminRoleCompensation | undefined,
     { container }
   ) => {
-    if (!compensationData?.providerIdentityId) {
+    // Restore exactly what was there before -- never a hardcoded role.
+    const payload = roleMirrorCompensationPayload(compensationData);
+
+    if (!payload) {
       return;
     }
 
@@ -85,12 +87,6 @@ export const removeAdminRoleStep = createStep(
       Modules.AUTH
     );
 
-    await authModuleService.updateProviderIdentities([
-      {
-        id: compensationData.providerIdentityId,
-        // Restore exactly what was there before -- never a hardcoded role.
-        user_metadata: compensationData.previousMetadata ?? {},
-      },
-    ]);
+    await authModuleService.updateProviderIdentities([payload]);
   }
 );

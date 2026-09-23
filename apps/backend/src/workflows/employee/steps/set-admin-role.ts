@@ -1,6 +1,10 @@
 import { IAuthModuleService } from "@medusajs/framework/types";
 import { ContainerRegistrationKeys, Modules } from "@medusajs/framework/utils";
 import { createStep, StepResponse } from "@medusajs/framework/workflows-sdk";
+import {
+  roleMirrorCompensationPayload,
+  withCompanyAdminRole,
+} from "./role-mirror";
 
 type SetAdminRoleInput = { employeeId: string; customerId: string };
 
@@ -86,10 +90,7 @@ export const setAdminRoleStep = createStep(
     await authModuleService.updateProviderIdentities([
       {
         id: providerIdentity.id,
-        user_metadata: {
-          ...(previousMetadata ?? {}),
-          role: "company_admin",
-        },
+        user_metadata: withCompanyAdminRole(previousMetadata),
       },
     ]);
 
@@ -106,7 +107,10 @@ export const setAdminRoleStep = createStep(
       | undefined,
     { container }
   ) => {
-    if (!compensationData?.providerIdentityId) {
+    // Restore the exact prior metadata rather than blanking the role.
+    const payload = roleMirrorCompensationPayload(compensationData);
+
+    if (!payload) {
       return;
     }
 
@@ -114,12 +118,6 @@ export const setAdminRoleStep = createStep(
       Modules.AUTH
     );
 
-    await authModuleService.updateProviderIdentities([
-      {
-        id: compensationData.providerIdentityId,
-        // Restore the exact prior metadata rather than blanking the role.
-        user_metadata: compensationData.previousMetadata ?? {},
-      },
-    ]);
+    await authModuleService.updateProviderIdentities([payload]);
   }
 );

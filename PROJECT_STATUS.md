@@ -21,7 +21,7 @@
 | Backlog reconciliation | **DONE** | `DAY_0_BACKLOG.md` — 4 waves, dependency-aware, critical path identified |
 | Baseline tests/build | **DONE (with failures recorded)** | install PASS · lint PASS · migrate PASS · build PASS *after P0-1 fix* · **tests 15/15 FAIL** · typecheck **does not exist** |
 | Security/permission baseline | **DONE** | **26 findings, 8 CRITICAL** (5 added by independent QA); `DAY_0_AUDIT.md` §7 |
-| **P0-SEC-1 company-scoped authorization** | **IMPLEMENTED — in independent review** | Commit `c3d0d9f`; **22 findings closed + 2 new found and fixed**; see `SECURITY_FINDINGS.md` |
+| **P0-SEC-1 company-scoped authorization** | **COMPLETE — both independent reviews addressed** | Security review REJECTED the first cut; QA passed with corrections. All blocking items fixed. **22 Day 0 findings closed + 7 new found and fixed**; see `SECURITY_FINDINGS.md` |
 | Launch forecast | **DONE** | See below |
 
 ## Baseline command results
@@ -33,8 +33,8 @@
 | `medusa db:migrate` | PASS (162 tables from empty) |
 | `pnpm build` | **PASS** — only after P0-1 fix; requires a live backend |
 | `pnpm test` | **NO-OP** — no app defines a `test` script |
-| `test:unit` | **PASS 14/14** (first unit tests in the repo; were 0) |
-| `test:integration:http` | **47/48 pass** (were 0/48). The one failure is a pre-existing draft-order `unit_price` defect, proven pre-existing — tracked as D-02 under P0-2 |
+| `test:unit` | **PASS 28/28** (first unit tests in the repo; were 0) |
+| `test:integration:http` | **PASS 55/55** (were 0/48) |
 | typecheck | **Does not exist** |
 
 ## Top risks
@@ -48,8 +48,14 @@
    team's data (F-18, **P0-ROLE-1**).
 5. `JWT_SECRET` may be empty, in which case Medusa silently falls back to the
    literal `"supersecret"` outside production (F-20, **P0-SEC-6**).
-6. Quote draft orders may be losing `unit_price` (D-02) — a pricing-correctness
-   risk, not a security one.
+6. No invitation or consent step exists for roster attachment, so an admin can
+   attach any unaffiliated customer to their team (F-35, **P1-COM-1**).
+7. Employee↔customer duplication is still possible under a race; it needs a DB
+   unique constraint (F-34, **P2-DATA-1**). A duplicate would let membership
+   resolve to an arbitrary company.
+8. **Unverified at runtime:** whether soft-deleting an employee actually revokes
+   their access. If it does not, a removed coach keeps admin rights (F-39) —
+   the security reviewer's highest-priority empirical check.
 
 **Retired by P0-SEC-1** (were risks 1-3 and 7): global `company_admin` on signup
 (F-01), React-only approval enforcement (F-06), unauthorized DELETE routes

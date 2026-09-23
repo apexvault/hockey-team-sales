@@ -8,7 +8,7 @@ import { track } from "@vercel/analytics/server"
 import { revalidateTag } from "next/cache"
 import { redirect } from "next/navigation"
 import { retrieveCart, updateCart } from "./cart"
-import { createCompany, createEmployee } from "./companies"
+import { createCompany } from "./companies"
 import {
   getAuthHeaders,
   getCacheOptions,

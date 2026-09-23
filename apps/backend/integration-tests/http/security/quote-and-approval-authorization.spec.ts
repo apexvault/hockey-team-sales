@@ -395,17 +395,77 @@ medusaIntegrationTestRunner({
 
         const approval = Array.isArray(approvals) ? approvals[0] : approvals;
 
-        if (approval?.id) {
-          const res = await api
-            .post(
-              `/store/approvals/${approval.id}`,
-              { status: "approved" },
-              storm.headers
-            )
-            .catch((e) => e.response);
+        // Unconditional: if no approval came back, the test must FAIL rather
+        // than silently skip its only assertion.
+        expect(approval?.id).toBeDefined();
 
-          expect(res.status).toBe(403);
-        }
+        const res = await api
+          .post(
+            `/store/approvals/${approval.id}`,
+            { status: "approved" },
+            storm.headers
+          )
+          .catch((e) => e.response);
+
+        expect(res.status).toBe(403);
+
+        // And the approval must be untouched.
+        const stillPending = (
+          await api.get("/store/approvals", wolverines.headers)
+        ).data;
+
+        expect(JSON.stringify(stillPending)).not.toContain("approved");
+      });
+
+      /**
+       * Regression test for the guest-cart bypass.
+       *
+       * A cart created while logged out has no customer, so the cartCreated
+       * hook never links it to a company. transferCartCustomer (which the
+       * storefront calls on login) exposes no post-transfer hook, so the cart
+       * reaches checkout unlinked. Enforcement therefore must not depend on the
+       * link alone -- it resolves the company from the cart's customer too.
+       */
+      it("still applies approval settings to a cart that was created before login", async () => {
+        const wolverines = await registerCustomerWithCompany(
+          "captain@guestcart.test",
+          "Wolverines"
+        );
+
+        await api.post(
+          `/store/companies/${wolverines.company.id}/approval-settings`,
+          { requires_admin_approval: true },
+          wolverines.headers
+        );
+
+        // Create the cart with the publishable key only -- no Authorization,
+        // so no customer and therefore no company link.
+        const guestCart = (
+          await api.post(
+            "/store/carts",
+            {
+              region_id: region.id,
+              sales_channel_id: salesChannel.id,
+              currency_code: "usd",
+              items: [{ quantity: 1, variant_id: product.variants[0].id }],
+            },
+            storeHeaders
+          )
+        ).data.cart;
+
+        // Log in: the storefront transfers the cart to the customer.
+        await api.post(
+          `/store/carts/${guestCart.id}/customer`,
+          {},
+          wolverines.headers
+        );
+
+        const res = await api
+          .post(`/store/carts/${guestCart.id}/complete`, {}, wolverines.headers)
+          .catch((e) => e.response);
+
+        expect(res.status).toBeGreaterThanOrEqual(400);
+        expect(res.data?.order).toBeUndefined();
       });
 
       it("does not list another team's approvals", async () => {

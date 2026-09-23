@@ -17,6 +17,26 @@ export type CartApprovalInput = {
 };
 
 /**
+ * Choose the approval settings that govern a cart.
+ *
+ * The cart->company link cannot be the only source. `cartCreated` fires once,
+ * at creation, and only when the cart already has a customer; a shopper who
+ * browses logged out and signs in later has their customer attached by
+ * `transferCartCustomer`, which exposes no post-transfer hook. That cart
+ * reaches checkout unlinked, and a rule that reads only the link would find no
+ * settings and enforce nothing -- the original bypass, reachable through a
+ * completely ordinary flow.
+ *
+ * Preferring the link but falling back to the customer's own employee record
+ * makes enforcement independent of the cart's lifecycle.
+ */
+export const resolveApprovalSettings = (
+  cartCompanySettings: ApprovalSettingsLike,
+  customerCompanySettings: ApprovalSettingsLike
+): ApprovalSettingsLike =>
+  cartCompanySettings ?? customerCompanySettings ?? null;
+
+/**
  * Which approval types this cart's company demands before checkout.
  *
  * Extracted from the completeCart hook so the rule itself is independently

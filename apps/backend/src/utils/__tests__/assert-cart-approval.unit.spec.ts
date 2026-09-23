@@ -1,6 +1,7 @@
 import {
   assertCartApprovalSatisfied,
   getRequiredApprovalTypes,
+  resolveApprovalSettings,
 } from "../assert-cart-approval";
 import { ApprovalStatusType, ApprovalType } from "../../types/approval";
 
@@ -153,6 +154,39 @@ describe("assertCartApprovalSatisfied", () => {
         company: { approval_settings: { requires_admin_approval: true } },
       })
     ).not.toThrow();
+  });
+});
+
+describe("resolveApprovalSettings", () => {
+  const settings = { requires_admin_approval: true };
+
+  it("prefers the settings reached through the cart's company link", () => {
+    expect(resolveApprovalSettings(settings, null)).toBe(settings);
+  });
+
+  /**
+   * The guest-cart bypass. `cartCreated` fires only at creation and only when
+   * the cart already has a customer, and `transferCartCustomer` offers no
+   * post-transfer hook -- so browse-logged-out then sign-in yields a cart with
+   * no company link. Reading only the link would find no settings and enforce
+   * nothing.
+   */
+  it("falls back to the customer's company when the cart has no link", () => {
+    expect(resolveApprovalSettings(null, settings)).toBe(settings);
+    expect(resolveApprovalSettings(undefined, settings)).toBe(settings);
+  });
+
+  it("returns null only when neither source has settings", () => {
+    expect(resolveApprovalSettings(null, null)).toBeNull();
+    expect(resolveApprovalSettings(undefined, undefined)).toBeNull();
+  });
+
+  it("keeps an explicit approval-not-required setting rather than falling through", () => {
+    // `{}` and `{requires_admin_approval:false}` are real settings meaning "no
+    // approval needed". They must not be treated as absent, or the fallback
+    // could impose another company's requirement on this cart.
+    const noneRequired = { requires_admin_approval: false };
+    expect(resolveApprovalSettings(noneRequired, settings)).toBe(noneRequired);
   });
 });
 

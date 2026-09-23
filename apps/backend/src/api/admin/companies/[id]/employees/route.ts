@@ -43,6 +43,24 @@ export const POST = async (
   const query = req.scope.resolve(ContainerRegistrationKeys.QUERY);
   const { id } = req.params;
 
+  // The employee<->customer link is declared non-list (src/links/employee-customer.ts),
+  // so a customer with two employee rows makes `customer.employee` resolve to an
+  // arbitrary one of them -- and `resolveCompanyMembership` would then derive an
+  // arbitrary company. The store route already refuses this; without the same
+  // guard here, staff could create exactly that ambiguous state.
+  const { data: existing } = await query.graph({
+    entity: "customer",
+    fields: ["id", "employee.id"],
+    filters: { id: req.validatedBody.customer_id },
+  });
+
+  if (existing?.[0]?.employee?.id) {
+    return res.status(409).json({
+      message: "This customer already belongs to a company.",
+      code: "EMPLOYEE_ALREADY_EXISTS",
+    });
+  }
+
   const { result: createdEmployee } = await createEmployeesWorkflow.run({
     input: {
       employeeData: { ...req.validatedBody, company_id: id },

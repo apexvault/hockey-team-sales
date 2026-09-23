@@ -223,6 +223,143 @@ medusaIntegrationTestRunner({
       });
     });
 
+    /**
+     * AC#11 -- legitimate B2B workflows must keep working. Without these, a
+     * guard accidentally tightened to admin-only would pass every negative
+     * test in this file and still break the product for ordinary members.
+     */
+    describe("Non-admin member (positive regression)", () => {
+      let wolverines: any;
+      let member: any;
+
+      beforeEach(async () => {
+        wolverines = await registerCustomerWithCompany(
+          "captain@member.test",
+          "Wolverines"
+        );
+        member = await registerCustomer("player@member.test");
+
+        await api.post(
+          `/store/companies/${wolverines.company.id}/employees`,
+          {
+            customer_id: member.customer.id,
+            spending_limit: 0,
+            is_admin: false,
+          },
+          wolverines.headers
+        );
+      });
+
+      it("can read their own company", async () => {
+        const res = await api.get(
+          `/store/companies/${wolverines.company.id}`,
+          member.headers
+        );
+
+        expect(res.status).toBe(200);
+        expect(res.data.company.id).toBe(wolverines.company.id);
+      });
+
+      it("can list their own team's roster", async () => {
+        const res = await api.get(
+          `/store/companies/${wolverines.company.id}/employees`,
+          member.headers
+        );
+
+        expect(res.status).toBe(200);
+        expect(res.data.employees.length).toBeGreaterThanOrEqual(2);
+      });
+
+      it("cannot perform admin-only actions on their own company", async () => {
+        const res = await api
+          .post(
+            `/store/companies/${wolverines.company.id}`,
+            { name: "Renamed By Player" },
+            member.headers
+          )
+          .catch((e) => e.response);
+
+        expect(res.status).toBe(403);
+      });
+
+      it("cannot reach another team", async () => {
+        const storm = await registerCustomerWithCompany(
+          "captain@member2.test",
+          "Storm"
+        );
+
+        const res = await api
+          .get(`/store/companies/${storm.company.id}`, member.headers)
+          .catch((e) => e.response);
+
+        expect(res.status).toBe(403);
+      });
+    });
+
+    describe("Team must not be orphaned", () => {
+      it("refuses to delete the last member of a company", async () => {
+        const wolverines = await registerCustomerWithCompany(
+          "captain@last.test",
+          "Wolverines"
+        );
+
+        const employees = (
+          await api.get(
+            `/store/companies/${wolverines.company.id}/employees`,
+            wolverines.headers
+          )
+        ).data.employees;
+
+        const res = await api
+          .delete(
+            `/store/companies/${wolverines.company.id}/employees/${employees[0].id}`,
+            wolverines.headers
+          )
+          .catch((e) => e.response);
+
+        expect(res.status).toBe(409);
+        expect(res.data.code).toBe("LAST_EMPLOYEE");
+      });
+
+      it("refuses to demote the last admin", async () => {
+        const wolverines = await registerCustomerWithCompany(
+          "captain@lastadmin.test",
+          "Wolverines"
+        );
+
+        const member = await registerCustomer("player@lastadmin.test");
+        await api.post(
+          `/store/companies/${wolverines.company.id}/employees`,
+          {
+            customer_id: member.customer.id,
+            spending_limit: 0,
+            is_admin: false,
+          },
+          wolverines.headers
+        );
+
+        const employees = (
+          await api.get(
+            `/store/companies/${wolverines.company.id}/employees`,
+            wolverines.headers
+          )
+        ).data.employees;
+
+        const admin = employees.find((e: any) => e.is_admin === true);
+
+        const res = await api
+          .post(
+            `/store/companies/${wolverines.company.id}/employees/${admin.id}`,
+            { is_admin: false },
+            wolverines.headers
+          )
+          .catch((e) => e.response);
+
+        expect(res.status).toBe(409);
+        expect(res.data.code).toBe("LAST_ADMIN");
+      });
+    });
+
     describe("Non-member and cross-company access", () => {
       let wolverines: any;
       let storm: any;

@@ -47,6 +47,27 @@ export const POST = async (
   const { spending_limit, is_admin } = req.validatedBody;
   const query = req.scope.resolve(ContainerRegistrationKeys.QUERY);
 
+  // Demoting the last admin leaves the team unadministrable just as surely as
+  // deleting them, so it is refused on the same grounds.
+  if (is_admin === false) {
+    const { data: roster } = await query.graph({
+      entity: "employee",
+      fields: ["id", "is_admin"],
+      filters: { company_id: req.company_id },
+    });
+
+    const otherAdminExists = (roster ?? []).some(
+      (e: any) => e?.is_admin === true && e?.id !== employeeId
+    );
+
+    if (!otherAdminExists) {
+      return res.status(409).json({
+        message: "Cannot remove the last admin of a company.",
+        code: "LAST_ADMIN",
+      });
+    }
+  }
+
   await updateEmployeesWorkflow.run({
     input: {
       id: employeeId,
@@ -84,12 +105,51 @@ export const DELETE = async (
 
   const { data } = await query.graph({
     entity: "employee",
-    fields: ["id"],
+    fields: ["id", "is_admin"],
     filters: { id: employeeId, company_id: req.company_id },
   });
 
-  if (!data?.[0]) {
+  const target = data?.[0];
+
+  if (!target) {
     return res.status(403).json({ message: "Forbidden" });
+  }
+
+  /**
+   * Refuse to orphan the team.
+   *
+   * Nothing previously stopped an admin deleting themselves, including as the
+   * last member or the last admin. A company with members but no admin is
+   * permanently unadministrable -- nobody can promote a replacement, and the
+   * remaining members cannot found a new team because they are still
+   * affiliated. A company with no employees at all is unreachable by anyone,
+   * while its roster, carts and orders stay in the database with no one able to
+   * view or erase them. For youth rosters that is a data-retention problem, not
+   * just an availability one.
+   */
+  const { data: roster } = await query.graph({
+    entity: "employee",
+    fields: ["id", "is_admin"],
+    filters: { company_id: req.company_id },
+  });
+
+  const remaining = (roster ?? []).filter((e: any) => e?.id !== employeeId);
+
+  if (remaining.length === 0) {
+    return res.status(409).json({
+      message: "Cannot remove the last member of a company.",
+      code: "LAST_EMPLOYEE",
+    });
+  }
+
+  if (
+    target.is_admin === true &&
+    !remaining.some((e: any) => e?.is_admin === true)
+  ) {
+    return res.status(409).json({
+      message: "Cannot remove the last admin of a company.",
+      code: "LAST_ADMIN",
+    });
   }
 
   await deleteEmployeesWorkflow.run({
