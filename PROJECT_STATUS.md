@@ -21,7 +21,7 @@
 | Backlog reconciliation | **DONE** | `DAY_0_BACKLOG.md` — 4 waves, dependency-aware, critical path identified |
 | Baseline tests/build | **DONE (with failures recorded)** | install PASS · lint PASS · migrate PASS · build PASS *after P0-1 fix* · **tests 15/15 FAIL** · typecheck **does not exist** |
 | Security/permission baseline | **DONE** | **26 findings, 8 CRITICAL** (5 added by independent QA); `DAY_0_AUDIT.md` §7 |
-| **P0-SEC-1 company-scoped authorization** | **COMPLETE — both independent reviews addressed** | Security review REJECTED the first cut; QA passed with corrections. All blocking items fixed. **22 Day 0 findings closed + 7 new found and fixed**; see `SECURITY_FINDINGS.md` |
+| **P0-SEC-1 company-scoped authorization** | **COMPLETE — both independent reviews addressed** | Security review REJECTED the first cut; QA passed with corrections. All blocking items fixed. **22 Day 0 findings closed + 9 new found and fixed, 1 verified**; see `SECURITY_FINDINGS.md` |
 | Launch forecast | **DONE** | See below |
 
 ## Baseline command results
@@ -34,7 +34,7 @@
 | `pnpm build` | **PASS** — only after P0-1 fix; requires a live backend |
 | `pnpm test` | **NO-OP** — no app defines a `test` script |
 | `test:unit` | **PASS 28/28** (first unit tests in the repo; were 0) |
-| `test:integration:http` | **PASS 55/55** (were 0/48) |
+| `test:integration:http` | **PASS 61/61** (were 0/48) |
 | typecheck | **Does not exist** |
 
 ## Top risks
@@ -53,9 +53,14 @@
 7. Employee↔customer duplication is still possible under a race; it needs a DB
    unique constraint (F-34, **P2-DATA-1**). A duplicate would let membership
    resolve to an arbitrary company.
-8. **Unverified at runtime:** whether soft-deleting an employee actually revokes
-   their access. If it does not, a removed coach keeps admin rights (F-39) —
-   the security reviewer's highest-priority empirical check.
+8. A one-person team currently has no self-service offboarding path: the
+   `LAST_EMPLOYEE` guard blocks removing the only member, and a customer already
+   affiliated cannot found another company. Deliberate, but an **owner policy
+   decision** to confirm.
+
+Closed since the last report: soft-delete revocation (F-39) is no longer an open
+question — an integration test now proves a removed employee's still-valid token
+is refused.
 
 **Retired by P0-SEC-1** (were risks 1-3 and 7): global `company_admin` on signup
 (F-01), React-only approval enforcement (F-06), unauthorized DELETE routes

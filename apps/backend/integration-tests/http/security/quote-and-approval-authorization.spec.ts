@@ -96,13 +96,48 @@ medusaIntegrationTestRunner({
         },
       });
 
+    /**
+     * Give a cart a payment collection and session.
+     *
+     * Without this, `POST /store/carts/:id/complete` fails inside
+     * `validateCartPaymentsStep`, which core runs BEFORE the `validate` hook --
+     * so `validate-cart-completion.ts` is never reached and any assertion about
+     * approval enforcement passes on an unrelated payment error. A test that
+     * cannot fail on the bug it names is worse than no test, because it is
+     * recorded as coverage.
+     */
+    const makeCartPayable = async (cartId: string, actor: any) => {
+      const collection = (
+        await api.post(
+          "/store/payment-collections",
+          { cart_id: cartId },
+          actor.headers
+        )
+      ).data.payment_collection;
+
+      await api.post(
+        `/store/payment-collections/${collection.id}/payment-sessions`,
+        { provider_id: "pp_system_default" },
+        actor.headers
+      );
+
+      return collection;
+    };
+
     beforeEach(async () => {
       const container = getContainer();
       await createAdminUser(adminHeaders, container);
       const publishableKey = await generatePublishableKey(container);
       storeHeaders = generateStoreHeaders({ publishableKey });
 
-      region = await regionSeeder({ api, adminHeaders, data: {} });
+      region = await regionSeeder({
+        api,
+        adminHeaders,
+        // Enable the manual provider so a payment session can be created and
+        // cart completion reaches our validate hook. Passed here rather than in
+        // the shared seeder to keep the fixture repair minimal.
+        data: { payment_providers: ["pp_system_default"] },
+      });
       salesChannel = await salesChannelSeeder({ api, adminHeaders, data: {} });
       product = await productSeeder({
         api,
@@ -214,6 +249,79 @@ medusaIntegrationTestRunner({
         expect(res.status).toBe(403);
       });
 
+      /**
+       * The affirmative half of F-32. The handler used to re-filter on the
+       * caller's own customer_id, so this capability -- which the middleware
+       * explicitly authorises -- silently returned 404. Without this test,
+       * re-adding that filter would pass every other test in the suite.
+       */
+      it("lets a company admin read a teammate's quote", async () => {
+        const teammate = await registerCustomer("player@wolvq.test");
+
+        await api.post(
+          `/store/companies/${wolverines.company.id}/employees`,
+          {
+            customer_id: teammate.customer.id,
+            spending_limit: 0,
+            is_admin: false,
+          },
+          wolverines.headers
+        );
+
+        const teammateCart = await createCartFor(teammate);
+        const teammateQuote = (
+          await api.post(
+            "/store/quotes",
+            { cart_id: teammateCart.id },
+            teammate.headers
+          )
+        ).data.quote;
+
+        // wolverines is the company admin; the quote belongs to the teammate.
+        const res = await api.get(
+          `/store/quotes/${teammateQuote.id}`,
+          wolverines.headers
+        );
+
+        expect(res.status).toBe(200);
+        expect(res.data.quote.id).toBe(teammateQuote.id);
+      });
+
+      it("still forbids a company admin from ACCEPTING a teammate's quote", async () => {
+        // Reads are company-scoped; mutations are owner-only. Pins the
+        // `ownerOnly` distinction, which nothing else asserts.
+        const teammate = await registerCustomer("player2@wolvq.test");
+
+        await api.post(
+          `/store/companies/${wolverines.company.id}/employees`,
+          {
+            customer_id: teammate.customer.id,
+            spending_limit: 0,
+            is_admin: false,
+          },
+          wolverines.headers
+        );
+
+        const teammateCart = await createCartFor(teammate);
+        const teammateQuote = (
+          await api.post(
+            "/store/quotes",
+            { cart_id: teammateCart.id },
+            teammate.headers
+          )
+        ).data.quote;
+
+        const res = await api
+          .post(
+            `/store/quotes/${teammateQuote.id}/accept`,
+            {},
+            wolverines.headers
+          )
+          .catch((e) => e.response);
+
+        expect(res.status).toBe(403);
+      });
+
       it("lists only the caller's own quotes", async () => {
         const stormCart = await createCartFor(storm);
         await api.post("/store/quotes", { cart_id: stormCart.id }, storm.headers);
@@ -319,18 +427,19 @@ medusaIntegrationTestRunner({
         // client bypassing the React "Request approval" branch would do. The
         // old server check asked only "is an approval pending?", so an absent
         // approval passed.
+        // Satisfy the checkout prerequisites so core's own validation passes
+        // and execution actually reaches our validate hook.
+        await makeCartPayable(cart.id, wolverines);
+
         const res = await api
           .post(`/store/carts/${cart.id}/complete`, {}, wolverines.headers)
           .catch((e) => e.response);
 
-        // Completion is refused. Note the cart also lacks checkout
-        // prerequisites (payment collection), which core Medusa rejects before
-        // our validate hook runs -- so this asserts only that the cart does not
-        // complete. The approval rule itself is pinned precisely by the unit
-        // tests in src/utils/__tests__/assert-cart-approval.unit.spec.ts,
-        // which cover the fail-closed "no approval requested" case directly.
         expect(res.status).toBeGreaterThanOrEqual(400);
         expect(res.data?.order).toBeUndefined();
+        // The refusal must be the APPROVAL one specifically -- not a payment
+        // or shipping error that would mask a deleted approval check.
+        expect(JSON.stringify(res.data ?? {})).toMatch(/approval/i);
       });
 
       it("blocks completion while an approval is pending", async () => {
@@ -460,12 +569,142 @@ medusaIntegrationTestRunner({
           wolverines.headers
         );
 
+        await makeCartPayable(guestCart.id, wolverines);
+
         const res = await api
           .post(`/store/carts/${guestCart.id}/complete`, {}, wolverines.headers)
           .catch((e) => e.response);
 
         expect(res.status).toBeGreaterThanOrEqual(400);
         expect(res.data?.order).toBeUndefined();
+        // Must be refused FOR APPROVAL. Without the customer-derived fallback
+        // (and the link-repair subscriber) this cart has no company, so the
+        // requirement would not be found and the cart would complete.
+        expect(JSON.stringify(res.data ?? {})).toMatch(/approval/i);
+      });
+
+      /**
+       * The other half of the same flow: once the link is repaired, the shopper
+       * must be able to REQUEST approval. Routing around the link in the
+       * completion guard alone left this returning
+       * "No enabled approval types found", making the cart a dead end.
+       */
+      it("lets a cart created before login still request approval", async () => {
+        const wolverines = await registerCustomerWithCompany(
+          "captain@guestcart2.test",
+          "Wolverines"
+        );
+
+        await api.post(
+          `/store/companies/${wolverines.company.id}/approval-settings`,
+          { requires_admin_approval: true },
+          wolverines.headers
+        );
+
+        const guestCart = (
+          await api.post(
+            "/store/carts",
+            {
+              region_id: region.id,
+              sales_channel_id: salesChannel.id,
+              currency_code: "usd",
+              items: [{ quantity: 1, variant_id: product.variants[0].id }],
+            },
+            storeHeaders
+          )
+        ).data.cart;
+
+        await api.post(
+          `/store/carts/${guestCart.id}/customer`,
+          {},
+          wolverines.headers
+        );
+
+        const res = await api
+          .post(`/store/carts/${guestCart.id}/approvals`, {}, wolverines.headers)
+          .catch((e) => e.response);
+
+        expect(res.status).toBe(200);
+      });
+
+      /**
+       * Separation of duties applies only where a second admin exists (F-30).
+       * Both directions are pinned: without the first test the deadlock
+       * regression returns silently; without the second, the four-eyes rule
+       * could be dropped entirely and nothing would fail.
+       */
+      const raiseApprovalOnOwnCart = async (actor: any, company: any) => {
+        await api.post(
+          `/store/companies/${company.id}/approval-settings`,
+          { requires_admin_approval: true },
+          actor.headers
+        );
+
+        const cart = await createCartFor(actor);
+
+        const approvals = (
+          await api.post(`/store/carts/${cart.id}/approvals`, {}, actor.headers)
+        ).data.approvals;
+
+        const approval = Array.isArray(approvals) ? approvals[0] : approvals;
+        expect(approval?.id).toBeDefined();
+        return approval;
+      };
+
+      it("lets the ONLY admin decide their own request, so a solo team is not deadlocked", async () => {
+        const solo = await registerCustomerWithCompany(
+          "captain@solo.test",
+          "Solo Wolverines"
+        );
+
+        const approval = await raiseApprovalOnOwnCart(solo, solo.company);
+
+        const res = await api.post(
+          `/store/approvals/${approval.id}`,
+          { status: "approved" },
+          solo.headers
+        );
+
+        expect(res.status).toBe(200);
+      });
+
+      it("forbids self-approval once the team has a second admin", async () => {
+        const team = await registerCustomerWithCompany(
+          "captain@duo.test",
+          "Duo Wolverines"
+        );
+
+        const coAdmin = await registerCustomer("assistant@duo.test");
+        await api.post(
+          `/store/companies/${team.company.id}/employees`,
+          {
+            customer_id: coAdmin.customer.id,
+            spending_limit: 0,
+            is_admin: true,
+          },
+          team.headers
+        );
+
+        const approval = await raiseApprovalOnOwnCart(team, team.company);
+
+        const selfRes = await api
+          .post(
+            `/store/approvals/${approval.id}`,
+            { status: "approved" },
+            team.headers
+          )
+          .catch((e) => e.response);
+
+        expect(selfRes.status).toBe(403);
+
+        // ...but the other admin can decide it, so the cart is not stuck.
+        const otherRes = await api.post(
+          `/store/approvals/${approval.id}`,
+          { status: "approved" },
+          coAdmin.headers
+        );
+
+        expect(otherRes.status).toBe(200);
       });
 
       it("does not list another team's approvals", async () => {

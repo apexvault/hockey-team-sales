@@ -296,6 +296,69 @@ medusaIntegrationTestRunner({
       });
     });
 
+    /**
+     * F-39 -- does removing someone from a team actually revoke their access?
+     *
+     * `deleteEmployeesStep` soft-deletes the employee but does not dismiss the
+     * employee<->customer link row, so revocation rests entirely on Medusa's
+     * query layer excluding soft-deleted rows from `customer.employee`. That is
+     * the documented default and almost certainly holds -- but "almost
+     * certainly" is not good enough for the control that decides whether a coach
+     * removed from a team keeps admin rights over a roster of minors. Asserted
+     * rather than assumed.
+     */
+    describe("Membership revocation", () => {
+      it("revokes access as soon as the employee is removed", async () => {
+        const wolverines = await registerCustomerWithCompany(
+          "captain@revoke.test",
+          "Wolverines"
+        );
+
+        const member = await registerCustomer("player@revoke.test");
+
+        const created = (
+          await api.post(
+            `/store/companies/${wolverines.company.id}/employees`,
+            {
+              customer_id: member.customer.id,
+              spending_limit: 0,
+              is_admin: true,
+            },
+            wolverines.headers
+          )
+        ).data.employee;
+
+        // Precondition: they can see the team while they are on it.
+        const before = await api.get(
+          `/store/companies/${wolverines.company.id}`,
+          member.headers
+        );
+        expect(before.status).toBe(200);
+
+        await api.delete(
+          `/store/companies/${wolverines.company.id}/employees/${created.id}`,
+          wolverines.headers
+        );
+
+        // Their still-valid session token must no longer reach the team.
+        const after = await api
+          .get(`/store/companies/${wolverines.company.id}`, member.headers)
+          .catch((e) => e.response);
+
+        expect(after.status).toBe(403);
+
+        // ...including the roster, which carries other people's contact data.
+        const roster = await api
+          .get(
+            `/store/companies/${wolverines.company.id}/employees`,
+            member.headers
+          )
+          .catch((e) => e.response);
+
+        expect(roster.status).toBe(403);
+      });
+    });
+
     describe("Team must not be orphaned", () => {
       it("refuses to delete the last member of a company", async () => {
         const wolverines = await registerCustomerWithCompany(
