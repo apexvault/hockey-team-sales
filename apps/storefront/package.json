@@ -19,6 +19,7 @@
     "@headlessui/react": "^2.2.0",
     "@hookform/resolvers": "^3.9.0",
     "@medusajs/icons": "2.21.1",
+    "@medusajs/instantsearch-adapter": "2.21.1",
     "@medusajs/js-sdk": "2.21.1",
     "@medusajs/types": "2.21.1",
     "@medusajs/ui": "4.2.4",

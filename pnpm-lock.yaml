@@ -130,6 +130,9 @@ importers:
       '@medusajs/icons':
         specifier: 2.21.1
         version: 2.21.1(react@19.0.5)
+      '@medusajs/instantsearch-adapter':
+        specifier: 2.21.1
+        version: 2.21.1
       '@medusajs/js-sdk':
         specifier: 2.21.1
         version: 2.21.1
@@ -1742,6 +1745,10 @@ packages:
     engines: {node: '>=20'}
     peerDependencies:
       '@medusajs/framework': 2.21.1
+
+  '@medusajs/instantsearch-adapter@2.21.1':
+    resolution: {integrity: sha512-f5c9yErd6GFIyNOtnCb5hOJsWjTeatG9YPs6fAEg3e+/MDCUD99NRdXPrs7zQRAaIpy+Joghn0Hw0Jgds02xUA==}
+    engines: {node: '>=20'}
 
   '@medusajs/inventory@2.21.1':
     resolution: {integrity: sha512-E30j9KDCvBClBETXLg2rpeHU/FFOUQp7OtJailmbh7vOpEW5UB1J6xakWKplppROAw3ytK5PqCN/a9Bem8efHA==}
@@ -11072,6 +11079,8 @@ snapshots:
   '@medusajs/index@2.21.1(@medusajs/framework@2.21.1(@medusajs/cli@2.21.1(@types/node@20.19.27))(@types/node@20.19.27)(ioredis@5.8.2)(vite@7.3.6(@types/node@20.19.27)(jiti@2.7.0)(terser@5.44.1)(yaml@2.9.0))(zod@4.2.0))':
     dependencies:
       '@medusajs/framework': 2.21.1(@medusajs/cli@2.21.1(@types/node@20.19.27))(@types/node@20.19.27)(ioredis@5.8.2)(vite@7.3.6(@types/node@20.19.27)(jiti@2.7.0)(terser@5.44.1)(yaml@2.9.0))(zod@4.2.0)
+
+  '@medusajs/instantsearch-adapter@2.21.1': {}
 
   '@medusajs/inventory@2.21.1(@medusajs/framework@2.21.1(@medusajs/cli@2.21.1(@types/node@20.19.27))(@types/node@20.19.27)(ioredis@5.8.2)(vite@7.3.6(@types/node@20.19.27)(jiti@2.7.0)(terser@5.44.1)(yaml@2.9.0))(zod@4.2.0))':
     dependencies:
