@@ -196,6 +196,12 @@ acceptance principle, **no feature can currently be marked DONE.**
 
 > F-22 … F-26 were added by the independent QA reviewer, who verified the original
 > 21 and found five more. F-22 is critical.
+>
+> **Remediation status — see `SECURITY_FINDINGS.md` for the live register.**
+> P0-SEC-1 (commit `c3d0d9f`) closes F-01 … F-07, F-10 … F-17 and F-22 … F-26,
+> plus two further defects found during implementation (F-27, F-28). This
+> section is preserved as the Day 0 evidence record and is **not** rewritten;
+> the register tracks what is now fixed.
 
 Audited independently of the implementation pass. In this product a "company" is a
 **hockey team**, so cross-company leakage means cross-team leakage, and rosters
