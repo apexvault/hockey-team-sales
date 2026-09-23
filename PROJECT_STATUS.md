@@ -8,7 +8,7 @@
   confidence in `DAY_0_AUDIT.md` §10). Hockey-specific code: **0%**.
 - Current owner blocker: 7 owner gates open (see below) — none block the first P0 task
 - Production status: No deployment authorized; **no deployment mechanism exists**
-- Next milestone: Wave 0 complete — remaining: P0-INF-1 (CI), P0-INF-2 (toolchain), P0-2 (fixtures), P0-SEC-6 (secrets)
+- Next milestone: Wave 0 complete — remaining: **P0-INF-1 (CI)**, P0-INF-2 (toolchain), P0-2 (residual fixture debt), P0-SEC-6 (secrets), **P0-SEC-7 (new — cart-transfer ownership, before beta)**
 
 ## Day 0 tracker
 
@@ -21,7 +21,7 @@
 | Backlog reconciliation | **DONE** | `DAY_0_BACKLOG.md` — 4 waves, dependency-aware, critical path identified |
 | Baseline tests/build | **DONE (with failures recorded)** | install PASS · lint PASS · migrate PASS · build PASS *after P0-1 fix* · **tests 15/15 FAIL** · typecheck **does not exist** |
 | Security/permission baseline | **DONE** | **26 findings, 8 CRITICAL** (5 added by independent QA); `DAY_0_AUDIT.md` §7 |
-| **P0-SEC-1 company-scoped authorization** | **COMPLETE — both independent reviews addressed** | Security review REJECTED the first cut; QA passed with corrections. All blocking items fixed. **22 Day 0 findings closed + 9 new found and fixed, 1 verified**; see `SECURITY_FINDINGS.md` |
+| **P0-SEC-1 company-scoped authorization** | **COMPLETE — APPROVED WITH CONDITIONS** | Security rejected twice, then approved on the third round; QA passed with corrections. Both rejections found real defects. **22 Day 0 findings closed + 10 new found and fixed, 1 verified by test**; conditions tracked in P0-SEC-7. See `SECURITY_FINDINGS.md` |
 | Launch forecast | **DONE** | See below |
 
 ## Baseline command results
@@ -41,10 +41,14 @@
 
 1. **No CI exists** — now the single largest risk. It is why a broken build and a
    fully broken test suite both shipped undetected, and nothing yet protects the
-   authorization boundary just built. **P0-INF-1.**
+   89 tests now guarding the authorization boundary. **P0-INF-1.**
 2. **No deployment, backup, monitoring, or rollback mechanism exists anywhere.**
 3. Artwork/proof/roster/production are ~0% built and sit on the critical path.
-4. Admin surface still has no role granularity — any staff login sees every
+4. **`POST /store/carts/:id/customer` has no ownership check** (F-41) — any
+   authenticated customer with a cart id can transfer that cart to themselves and
+   read its contents, which now also moves the cart's company link. Gated only by
+   ULID entropy. **P0-SEC-7, before beta.**
+5. Admin surface still has no role granularity — any staff login sees every
    team's data (F-18, **P0-ROLE-1**).
 5. `JWT_SECRET` may be empty, in which case Medusa silently falls back to the
    literal `"supersecret"` outside production (F-20, **P0-SEC-6**).

@@ -71,7 +71,31 @@ passed it with corrections. Both are addressed below.
 | F-31 | MEDIUM | Employee creation returned three distinguishable outcomes (403 absent / 409 affiliated / 200 free), letting any team admin probe an arbitrary customer id for existence and affiliation. | **FIXED** — one uniform 409 for both refusal cases |
 | F-32 | MEDIUM | **Regression introduced by the first implementation.** `GET /store/quotes/:id` re-filtered on the caller's own `customer_id` with `throwIfKeyNotFound`, so the company-admin read the middleware authorises silently returned `404 "Quote id not found: <id>"` — restoring the id-echoing oracle this change set out to remove, and disagreeing with its sibling `/preview`. | **FIXED** — authorization lives in the middleware; the handler returns the uniform 403 |
 | F-33 | MEDIUM | An admin could delete or demote the last member/admin, leaving a team unadministrable or wholly unreachable while its roster, carts and orders — minors' data — remain with nobody able to view or erase them. | **FIXED** — `LAST_EMPLOYEE` / `LAST_ADMIN` guards on both delete and demote |
-| F-34 | MEDIUM | Duplicate employee links were possible via `POST /admin/companies/:id/employees`, which had no affiliation guard. The employee↔customer link is non-list, so a duplicate makes `resolveCompanyMembership` derive an **arbitrary** company — the one way the boundary could yield the wrong tenant. | **PARTIAL** — admin-side guard added; a DB unique constraint is still needed to close the TOCTOU race (**P2-DATA-1**) |
+| F-34 | MEDIUM | Duplicate employee links were possible via `POST /admin/companies/:id/employees`, which had no affiliation guard. The employee↔customer link is non-list, so a duplicate makes `resolveCompanyMembership` derive an **arbitrary** company — the one way the boundary could yield the wrong tenant. Reviewer correction: the residual race is reachable by **two unrelated team admins**, not only staff, so it is cross-tenant. | **PARTIAL** — both creation routes guarded; a DB unique constraint is still needed to close the TOCTOU race (**P2-DATA-1**, before any bulk roster import) |
+
+---
+
+## Mutation-test record — what the suite actually proves
+
+The approval guarantee has two independent layers: the **link-repair subscriber**
+(`cart.customer_transferred`) and the **customer-derived fallback** in the
+completion guard. Claiming "covered" for both would be inferring coverage from a
+combined run, so each was disabled in isolation and the result recorded.
+
+| Mutation | Result | What it proves |
+|---|---|---|
+| Both layers disabled | 2 failures, exactly the two guest-cart tests | The combined mechanism is **necessary** — the bypass cannot reappear unnoticed |
+| **Subscriber only** disabled | 1 failure: *"lets a cart created before login still request approval"*. The completion test **still passed** | The fallback's three-hop `customer → employee → company → approval_settings` graph path **works at runtime**, not just as a pure function — it caught the unlinked cart on its own |
+| **Fallback only** disabled | **All 61 green** | A known **coverage asymmetry**: with the link repaired, no standing test ever takes the fallback branch |
+
+**Honest conclusion.** The security property is proven, and both layers are proven
+to work — but the fallback is proven only *under mutation*, not by the standing
+suite. A future regression that broke the fallback alone would not fail CI. It is
+the redundant layer and the primary layer is covered, so this is not a security
+gap; it is recorded rather than glossed, and tracked in P0-SEC-7.
+
+Predicted in advance by the independent security reviewer and confirmed exactly,
+including which single test would fail in each case.
 
 ---
 
@@ -84,6 +108,7 @@ passed it with corrections. Both are addressed below.
 | F-20 | LOW | `medusa-config.ts` passes an empty `JWT_SECRET` through; Medusa then silently falls back to the literal `"supersecret"` outside production. | **P0-SEC-6** |
 | F-21 | INFO | Storefront `is_admin` gating is UI-only — acceptable now that the server enforces the same rule. | N/A |
 | F-35 | MEDIUM | No invitation/consent step for roster attachment (above). Until it exists, "verified membership" is not achievable and a team admin can unilaterally place a child's account on their roster. **The security reviewer's position: deferrable from P0-SEC-1, but it must ship before any real roster.** | **P1-COM-1** |
+| F-41 | **MEDIUM** | **`POST /store/carts/:id/customer` has no ownership check** — core passes `req.params.id` straight into `transferCartCustomerWorkflow` and returns the full cart including line items, so any authenticated customer holding any cart id can transfer it to themselves. Pre-existing upstream and missed by this ticket's cart sweep (which fixed the other two such routes). **The link-repair subscriber amplifies it**: the transfer now moves the cart's company link, so a hijack also removes the cart from the victim team admin's approval queue and moves a pending approval under the attacker's company. Gated only by a high-entropy `cart_<ULID>`. Fix: permit transfer only when the cart has no customer, that customer has `has_account === false`, or it is already the caller — `ensureCartAccess` cannot be reused, since a guest cart would 403 and re-break the flow. | **P0-SEC-7** — top of that list, before beta |
 | F-36 | LOW | `GET /store/free-shipping/prices?cart_id=…` has no authentication and no cart-ownership check, giving anyone with the public publishable key a cart-existence and basket-total oracle. Pre-existing; outside P0-SEC-1's scope. | **P0-SEC-7** (new) |
 | F-37 | LOW | `StoreUpdateApproval.status` is a bare `z.string()`, not a native enum, and `ensureApprovalAccess` ignores `approval.status` — so an already-decided approval can be re-decided. Fails closed against the completion rule, but the column is modelled as an enum. | **P0-SEC-7** (new) |
 | F-38 | LOW | `set-admin-role` still writes a non-company-scoped `role` marker into `user_metadata`. Nothing reads it today, but any future consumer re-opens F-01/F-22. Provider identities are keyed on email, which is not unique across guest/account customers. | **P0-SEC-7** (new) |
