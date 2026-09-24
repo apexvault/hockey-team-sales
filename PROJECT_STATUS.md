@@ -8,7 +8,7 @@
   confidence in `DAY_0_AUDIT.md` §10). Hockey-specific code: **0%**.
 - Current owner blocker: 7 owner gates open (see below) — none block the first P0 task
 - Production status: No deployment authorized; **no deployment mechanism exists**
-- Next milestone: Wave 0 complete — remaining: **branch protection (owner gate 0)**, P0-INF-2 (toolchain), P0-2 (residual fixture debt), P0-SEC-6 (secrets), P0-SEC-7 remainder (F-36/F-37/F-38)
+- Next milestone: Wave 0 complete — remaining: **branch protection (owner gate 0)**, P0-INF-2 (toolchain), P0-2 (residual fixture debt), P0-SEC-6 (secrets), P0-SEC-7 remainder (F-37/F-38/F-42/F-43)
 
 ## Day 0 tracker
 
@@ -31,13 +31,13 @@
 | Command | Result |
 |---|---|
 | `pnpm install --frozen-lockfile` | PASS |
-| `pnpm lint` | PASS (0 errors, 14 warnings) |
+| `pnpm lint` | PASS (0 errors, 12 warnings) |
 | `medusa db:migrate` | PASS (162 tables from empty) |
 | `pnpm build` | **PASS** — only after P0-1 fix; requires a live backend |
 | `pnpm test` | **NO-OP** — no app defines a `test` script |
 | `test:unit` | **PASS 28/28** (first unit tests in the repo; were 0) |
-| `test:integration:http` | **PASS 61/61** (were 0/48) |
-| typecheck | **Does not exist** |
+| `test:integration:http` | **PASS 86/86** (were 0/48) |
+| typecheck | **Still does not exist** — two pre-existing `tsc` errors block adding it; P0-INF-2 |
 
 ## Top risks
 
@@ -59,10 +59,10 @@
    draft order that survives the parent reclaiming the cart. Accepted residual;
    **must close before any real guest traffic carrying minors' data**, and
    "before" has to account for copy-out, not merely read.
-7. Employee↔customer duplication is still possible under a race; it needs a DB
+8. Employee↔customer duplication is still possible under a race; it needs a DB
    unique constraint (F-34, **P2-DATA-1**). A duplicate would let membership
    resolve to an arbitrary company.
-8. **A one-person organization still has no self-service offboarding path.** The
+9. **A one-person organization still has no self-service offboarding path.** The
    `LAST_ADMINISTRATOR` guard refuses removing or demoting the last administrator,
    and because the last remaining member is necessarily an administrator, no
    other state is reachable. Succession works and is tested; winding down does
