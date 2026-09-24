@@ -129,7 +129,7 @@ npx medusa db:migrate
 TEST_TYPE=integration:http NODE_OPTIONS=--experimental-vm-modules npx jest --ci --runInBand --forceExit
 ```
 
-Expected: **76 passed**, ~2min.
+Expected: **83 passed**, ~2min.
 
 ### 5. Production builds — CI job `build`
 

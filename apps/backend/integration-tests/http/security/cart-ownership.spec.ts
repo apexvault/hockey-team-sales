@@ -289,6 +289,49 @@ medusaIntegrationTestRunner({
         expect(anon.status).toBe(403);
       });
 
+      /**
+       * S-4. The `has_account === false` branch had NO coverage: the test above
+       * only ever reaches the "no customer at all" branch, because Medusa
+       * creates the guest customer *as part of* the request that sets the email.
+       * Deleting the guest branch alone therefore left every test green while
+       * breaking guest checkout at the very next request. This is the test that
+       * was missing.
+       */
+      it("keeps a guest shopper working after they enter their email", async () => {
+        const cart = await createAnonymousCart();
+
+        // Setting an email attaches a has_account:false customer to the cart.
+        const setEmail = await api.post(
+          `/store/carts/${cart.id}`,
+          { email: "parent@guest.test" },
+          storeHeaders
+        );
+        expect(setEmail.status).toBe(200);
+        expect(setEmail.data.cart.customer_id).toBeTruthy();
+
+        // From here the cart HAS a customer, so every subsequent request takes
+        // the guest branch rather than the unclaimed one.
+        const read = await api.get(`/store/carts/${cart.id}`, storeHeaders);
+        expect(read.status).toBe(200);
+
+        const addItem = await api.post(
+          `/store/carts/${cart.id}/line-items`,
+          { quantity: 1, variant_id: product.variants[0].id },
+          storeHeaders
+        );
+        expect(addItem.status).toBe(200);
+
+        // ...and it is still claimable by the shopper when they sign in.
+        const shopper = await registerCustomer("parent@guest-signup.test");
+        const claim = await api.post(
+          `/store/carts/${cart.id}/customer`,
+          {},
+          shopper.headers
+        );
+        expect(claim.status).toBe(200);
+        expect(claim.data.cart.customer_id).toBe(shopper.customer.id);
+      });
+
       it("is idempotent when the owner re-claims their own cart", async () => {
         const shopper = await registerCustomer("shopper3@anon.test");
         const cart = await createAnonymousCart();
@@ -395,6 +438,132 @@ medusaIntegrationTestRunner({
         // The Wolverines admin still does.
         const ownQueue = await api.get("/store/approvals", wolverines.headers);
         expect(JSON.stringify(ownQueue.data ?? {})).toContain(cart.id);
+      });
+    });
+
+    /**
+     * The cause is "a cart id is treated as authority", not "/store/carts/** is
+     * unguarded". These routes take a cart id from a BODY or QUERY STRING and
+     * were missed by the first pass, which only covered path parameters.
+     */
+    describe("Cart ID as authority via body and query", () => {
+      it("denies creating a quote from another team's cart", async () => {
+        const wolverines = await registerCustomerWithCompany(
+          "captain@quoteleak.test",
+          "Wolverines"
+        );
+        const storm = await registerCustomerWithCompany(
+          "captain@quoteleak2.test",
+          "Storm"
+        );
+
+        const cart = await createOwnedCart(wolverines);
+
+        // createRequestForQuoteWorkflow reads the cart's items and addresses and
+        // builds a draft order under the CALLER's customer_id -- so the quote is
+        // legitimately the attacker's and passes every later ownership check.
+        // The victim is never notified.
+        const res = await api
+          .post("/store/quotes", { cart_id: cart.id }, storm.headers)
+          .catch((e) => e.response);
+
+        expect(res.status).toBe(403);
+        expect(JSON.stringify(res.data ?? {})).not.toContain(
+          product.variants[0].id
+        );
+
+        // And no quote was created for the attacker.
+        const stormQuotes = (await api.get("/store/quotes", storm.headers)).data
+          .quotes;
+        expect(stormQuotes).toHaveLength(0);
+      });
+
+      it("still allows quoting your own cart", async () => {
+        const wolverines = await registerCustomerWithCompany(
+          "captain@quoteok.test",
+          "Wolverines"
+        );
+        const cart = await createOwnedCart(wolverines);
+
+        const res = await api.post(
+          "/store/quotes",
+          { cart_id: cart.id },
+          wolverines.headers
+        );
+
+        expect(res.status).toBe(200);
+        expect(res.data.quote.cart_id).toBe(cart.id);
+      });
+
+      it("denies reading another customer's basket total via free-shipping prices", async () => {
+        const victim = await registerCustomer("victim@freeship.test");
+        const attacker = await registerCustomer("attacker@freeship.test");
+
+        const cart = await createOwnedCart(victim);
+
+        const res = await api
+          .get(`/store/free-shipping/prices?cart_id=${cart.id}`, attacker.headers)
+          .catch((e) => e.response);
+        expect(res.status).toBe(403);
+
+        // The route previously needed no credentials at all.
+        const anon = await api
+          .get(`/store/free-shipping/prices?cart_id=${cart.id}`, storeHeaders)
+          .catch((e) => e.response);
+        expect(anon.status).toBe(403);
+      });
+
+      it("no longer distinguishes a real cart from an unknown one on free-shipping prices", async () => {
+        const victim = await registerCustomer("victim2@freeship.test");
+        const attacker = await registerCustomer("attacker2@freeship.test");
+        const cart = await createOwnedCart(victim);
+
+        const real = await api
+          .get(`/store/free-shipping/prices?cart_id=${cart.id}`, attacker.headers)
+          .catch((e) => e.response);
+        const fake = await api
+          .get(
+            "/store/free-shipping/prices?cart_id=cart_01DOESNOTEXIST",
+            attacker.headers
+          )
+          .catch((e) => e.response);
+
+        // Previously 200 vs 404 -- a clean cart-existence oracle.
+        expect(real.status).toBe(403);
+        expect(fake.status).toBe(403);
+        expect(real.data?.message).toBe(fake.data?.message);
+      });
+
+      it("denies creating a payment collection on another customer's cart", async () => {
+        const victim = await registerCustomer("victim@paycol.test");
+        const attacker = await registerCustomer("attacker@paycol.test");
+
+        const cart = await createOwnedCart(victim);
+
+        // The response carried `amount` -- the victim's basket total -- and the
+        // call also created state on their checkout.
+        const res = await api
+          .post("/store/payment-collections", { cart_id: cart.id }, attacker.headers)
+          .catch((e) => e.response);
+        expect(res.status).toBe(403);
+
+        const anon = await api
+          .post("/store/payment-collections", { cart_id: cart.id }, storeHeaders)
+          .catch((e) => e.response);
+        expect(anon.status).toBe(403);
+      });
+
+      it("still allows a payment collection on your own cart", async () => {
+        const shopper = await registerCustomer("shopper@paycol.test");
+        const cart = await createOwnedCart(shopper);
+
+        const res = await api.post(
+          "/store/payment-collections",
+          { cart_id: cart.id },
+          shopper.headers
+        );
+
+        expect(res.status).toBe(200);
       });
     });
 

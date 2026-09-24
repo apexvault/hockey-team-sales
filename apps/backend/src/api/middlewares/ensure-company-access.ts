@@ -286,8 +286,20 @@ export const ensureEmployeeInCompany = (
 /**
  * Require that the cart named in the path belongs to the caller.
  *
- * A cart is the caller's when they own it directly, or when it belongs to their
- * company. Guest carts (no customer, no company) are left to core Medusa.
+ * POLICY (settled in P0-SEC-7): **a cart belongs to one customer, not to a
+ * company.** An earlier version also admitted any member of the cart owner's
+ * company. That branch became unreachable once `ensureCartNotOwnedByAnother`
+ * was registered ahead of this guard on the whole `/store/carts/:id` surface,
+ * which left two guards asserting contradictory policies with the stricter one
+ * winning by ordering accident — so a later change to the matcher would have
+ * silently restored the looser rule.
+ *
+ * The company branch is therefore removed rather than left dead. A teammate has
+ * no business editing another member's basket; company-level authority is
+ * exercised through the approval flow (`/store/approvals/:id`), which is
+ * company-scoped by design and unaffected by this.
+ *
+ * Guest carts (no customer) are left to core Medusa.
  */
 export const ensureCartAccess = (options: { param?: string } = {}) => {
   const { param = "id" } = options;
@@ -328,14 +340,8 @@ export const ensureCartAccess = (options: { param?: string } = {}) => {
         return next();
       }
 
-      const membership = await resolveCompanyMembership(req);
-      const cartCompanyId = (cart as any).company?.id;
-
-      if (
-        membership &&
-        cartCompanyId &&
-        cartCompanyId === membership.companyId
-      ) {
+      // A cart with no customer is still claimable; core owns that flow.
+      if (!cart.customer_id) {
         return next();
       }
 
@@ -375,9 +381,21 @@ export const ensureCartAccess = (options: { param?: string } = {}) => {
  * fixing one verb would leave the same hole on the others.
  */
 export const ensureCartNotOwnedByAnother = (
-  options: { param?: string } = {}
+  options: {
+    param?: string;
+    /**
+     * Where the cart id comes from. A cart id is just as much a claim of
+     * authority in a request body or query string as it is in a path, and the
+     * first version of this guard only covered paths -- which left
+     * `POST /store/quotes` ({ cart_id }) able to dump another team's entire
+     * basket, and `/store/free-shipping/prices?cart_id=` able to do it
+     * unauthenticated. The cause is "cart id treated as authority", not
+     * "`/store/carts/**` is unguarded".
+     */
+    source?: "params" | "body" | "query";
+  } = {}
 ) => {
-  const { param = "id" } = options;
+  const { param = "id", source = "params" } = options;
 
   return async (
     req: CompanyScopedRequest,
@@ -385,9 +403,16 @@ export const ensureCartNotOwnedByAnother = (
     next: MedusaNextFunction
   ) => {
     try {
-      const cartId = req.params?.[param];
+      const container =
+        source === "body"
+          ? ((req as any).validatedBody ?? req.body)
+          : source === "query"
+            ? ((req as any).validatedQuery ?? req.query)
+            : req.params;
 
-      if (!cartId) {
+      const cartId = container?.[param];
+
+      if (!cartId || typeof cartId !== "string") {
         return forbid(res);
       }
 
@@ -415,7 +440,26 @@ export const ensureCartNotOwnedByAnother = (
         return next();
       }
 
-      // Guest customer record: still claimable.
+      /**
+       * Guest customer record: still claimable.
+       *
+       * Be precise about what this permits, because the obvious reading is
+       * wrong. It does NOT cover "unclaimed" carts -- those have no customer at
+       * all and took the branch above. Medusa attaches a `has_account: false`
+       * customer the moment a guest enters their email during checkout, so this
+       * branch's real scope is **guest carts that already contain PII**: email,
+       * shipping address, and for this product a player's name and number.
+       *
+       * It is load-bearing: without it, every guest shopper is refused on their
+       * own cart at the next request, and the anonymous-to-authenticated
+       * transition breaks. Medusa has no session-bound cart, so for a guest the
+       * cart id genuinely is the only credential that exists.
+       *
+       * Residual risk, accepted and recorded (F-42): anyone who obtains a guest
+       * cart id can read that basket and claim it. Closing it properly needs a
+       * server-set cart nonce, or requiring a claimant's authenticated email to
+       * match `cart.email`. Tracked rather than silently tolerated.
+       */
       if (owner && owner.has_account === false) {
         return next();
       }

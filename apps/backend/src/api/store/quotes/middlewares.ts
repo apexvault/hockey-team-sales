@@ -6,6 +6,7 @@ import {
 import { MiddlewareRoute } from "@medusajs/medusa";
 import {
   attachCompanyScope,
+  ensureCartNotOwnedByAnother,
   ensureQuoteAccess,
 } from "../../middlewares/ensure-company-access";
 import {
@@ -41,6 +42,14 @@ export const storeQuotesMiddlewares: MiddlewareRoute[] = [
     matcher: "/store/quotes",
     middlewares: [
       validateAndTransformBody(CreateQuote),
+      // S-1. createRequestForQuoteWorkflow reads the cart at `cart_id` with
+      // items.*, shipping_address.* and billing_address.*, then builds a draft
+      // order carrying them under the CALLER's customer_id. The resulting quote
+      // is legitimately the caller's, so ensureQuoteAccess waves them through on
+      // read -- meaning a rival team could turn a cart id into a full dump of
+      // another team's basket, addresses and per-unit pricing, with the victim
+      // never notified. Validated body first, so the guard reads a parsed value.
+      ensureCartNotOwnedByAnother({ param: "cart_id", source: "body" }),
       validateAndTransformQuery(
         GetQuoteParams,
         retrieveQuoteTransformQueryConfig

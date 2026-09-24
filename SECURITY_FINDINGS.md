@@ -99,7 +99,14 @@ including which single test would fail in each case.
 
 ---
 
-> **P0-SEC-7 is NOT complete as a ticket.** `20dad81` closes F-41 (cart ownership)
+> **P0-SEC-7 scope note.** `fc73639` closed F-41 (cart-id-as-authority on
+> `/store/carts/**`). The follow-up extends the same rule to every cart-id-keyed
+> surface found by the security reviewer — `POST /store/quotes` (body),
+> `POST /store/payment-collections` (body) and
+> `GET /store/free-shipping/prices` (query, = F-36). **F-37 and F-38 remain
+> OPEN** under P0-SEC-7, as does the new F-42 below.
+>
+> Superseded note: `20dad81` closes F-41 (cart ownership)
 > only. F-36 (unauthenticated `/store/free-shipping/prices?cart_id=` oracle),
 > F-37 (`StoreUpdateApproval.status` is a bare string and a decided approval can
 > be re-decided) and F-38 (non-company-scoped `role` still written to
@@ -137,7 +144,8 @@ standalone output. Both were environment assumptions my local runs had masked.
 | F-21 | INFO | Storefront `is_admin` gating is UI-only — acceptable now that the server enforces the same rule. | N/A |
 | F-35 | MEDIUM | No invitation/consent step for roster attachment (above). Until it exists, "verified membership" is not achievable and a team admin can unilaterally place a child's account on their roster. **The security reviewer's position: deferrable from P0-SEC-1, but it must ship before any real roster.** | **P1-COM-1** |
 | ~~F-41~~ | **MEDIUM** | **FIXED by P0-SEC-7** (`20dad81`) — `ensureCartNotOwnedByAnother` on both `/store/carts/:id` and `/store/carts/:id/*`; 13 tests; mutation-verified (removing the guard fails 10 of 13). Original finding: **`POST /store/carts/:id/customer` has no ownership check** — core passes `req.params.id` straight into `transferCartCustomerWorkflow` and returns the full cart including line items, so any authenticated customer holding any cart id can transfer it to themselves. Pre-existing upstream and missed by this ticket's cart sweep (which fixed the other two such routes). **The link-repair subscriber amplifies it**: the transfer now moves the cart's company link, so a hijack also removes the cart from the victim team admin's approval queue and moves a pending approval under the attacker's company. Gated only by a high-entropy `cart_<ULID>`. | **FIXED** |
-| F-36 | LOW | `GET /store/free-shipping/prices?cart_id=…` has no authentication and no cart-ownership check, giving anyone with the public publishable key a cart-existence and basket-total oracle. Pre-existing; outside P0-SEC-1's scope. | **P0-SEC-7** (new) |
+| ~~F-36~~ | LOW | `GET /store/free-shipping/prices?cart_id=…` cart-existence and basket-total oracle, reachable with only the public publishable key. | **FIXED** — guarded on the query `cart_id`; real vs unknown cart now return an identical 403 |
+| F-42 | **MEDIUM** | **Guest carts containing PII are readable and claimable by anyone holding the cart id.** The `has_account === false` branch of `ensureCartNotOwnedByAnother` does not cover "unclaimed" carts (those have no customer at all) — Medusa attaches a guest customer the moment an email is entered, so the branch's real scope is guest carts that **already contain** email, shipping address and, for this product, a player's name and number. The branch is load-bearing: removing it refuses every guest shopper on their own cart. Medusa has no session-bound cart, so for a guest the cart id genuinely is the only credential. Closing it needs a server-set cart nonce, or requiring a claimant's authenticated email to match `cart.email`. | **OPEN — accepted residual**, tracked under P0-SEC-7. Must be closed before real guest traffic carrying minors' data. |
 | F-37 | LOW | `StoreUpdateApproval.status` is a bare `z.string()`, not a native enum, and `ensureApprovalAccess` ignores `approval.status` — so an already-decided approval can be re-decided. Fails closed against the completion rule, but the column is modelled as an enum. | **P0-SEC-7** (new) |
 | F-38 | LOW | `set-admin-role` still writes a non-company-scoped `role` marker into `user_metadata`. Nothing reads it today, but any future consumer re-opens F-01/F-22. Provider identities are keyed on email, which is not unique across guest/account customers. | **P0-SEC-7** (new) |
 | ~~F-39~~ | — | Soft-delete revocation: does removing an employee actually revoke access? **CLOSED — verified empirically, not deferred.** An integration test now adds an admin employee, confirms they can read the team, deletes them, and asserts their still-valid token gets 403 on both the company and the roster. | **VERIFIED** |
