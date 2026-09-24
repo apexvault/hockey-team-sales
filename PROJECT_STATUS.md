@@ -21,6 +21,7 @@
 | Backlog reconciliation | **DONE** | `DAY_0_BACKLOG.md` — 4 waves, dependency-aware, critical path identified |
 | Baseline tests/build | **DONE (with failures recorded)** | install PASS · lint PASS · migrate PASS · build PASS *after P0-1 fix* · **tests 15/15 FAIL** · typecheck **does not exist** |
 | Security/permission baseline | **DONE** | **26 findings, 8 CRITICAL** (5 added by independent QA); `DAY_0_AUDIT.md` §7 |
+| **P0-INF-1 mandatory CI** | **COMPLETE — CI GREEN** | Run [35940269550](https://github.com/apexvault/hockey-team-sales/actions/runs/35940269550), all 6 jobs success. Draft PR [#1](https://github.com/apexvault/hockey-team-sales/pull/1) — review only, **not merged**. Independent review found 2 false-green holes that survived a green run; both fixed and the fix proven by simulation |
 | **P0-SEC-1 company-scoped authorization** | **COMPLETE — APPROVED WITH CONDITIONS** | Security rejected twice, then approved on the third round; QA passed with corrections. Both rejections found real defects. **22 Day 0 findings closed + 10 new found and fixed, 1 verified by test**; conditions tracked in P0-SEC-7. See `SECURITY_FINDINGS.md` |
 | Launch forecast | **DONE** | See below |
 
@@ -39,9 +40,11 @@
 
 ## Top risks
 
-1. **No CI exists** — now the single largest risk. It is why a broken build and a
-   fully broken test suite both shipped undetected, and nothing yet protects the
-   89 tests now guarding the authorization boundary. **P0-INF-1.**
+1. **CI exists and is green, but it is not yet MANDATORY.** `main` has no branch
+   protection and no rulesets, so a red `CI passed` check blocks nothing today.
+   **This is an owner action** — changing repository access policy is outside
+   what I may do autonomously. See "Owner gates open" below for the exact steps.
+   Until it is done, every guarantee below is advisory.
 2. **No deployment, backup, monitoring, or rollback mechanism exists anywhere.**
 3. Artwork/proof/roster/production are ~0% built and sit on the critical path.
 4. **`POST /store/carts/:id/customer` has no ownership check** (F-41) — any
@@ -72,6 +75,17 @@ is refused.
 
 ## Owner gates open
 
+0. **Enable branch protection on `main`** (new, blocking the value of P0-INF-1).
+   Settings → Branches → Add rule for `main`:
+   - Require status checks to pass before merging
+   - Select the check named **`CI passed`** — *not* the individual jobs. A rule
+     naming the individual jobs goes green when those jobs are skipped or
+     cancelled, because GitHub reports neither failure nor success for them.
+   - Require a pull request before merging
+   - Consider a `CODEOWNERS` entry for `.github/` — under `pull_request`, a fork
+     PR runs the workflow file *from the fork*, so a fork could replace `ci.yml`
+     with a no-op that still declares a job named `CI passed`. This is inherent
+     to required status checks; review of `.github/` is the only mitigation.
 1. Order-status migration strategy
 2. Payment provider selection (nothing can be charged today)
 3. File/object storage selection (blocks all artwork work)

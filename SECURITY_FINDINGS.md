@@ -99,6 +99,28 @@ including which single test would fail in each case.
 
 ---
 
+## P0-INF-1 — CI false-green findings (independent review)
+
+CI was **green** when these were found. Each is a way the workflow could report
+success while the checks it claims to run did not happen.
+
+| ID | Severity | Finding | Status |
+|---|---|---|---|
+| FG-1 | **CRITICAL (in effect)** | `main` has no branch protection and no rulesets, so a red `CI passed` blocks nothing. "Mandatory CI" is not mandatory until an owner enables it. The check to protect is named **`CI passed`**, not `verify`. | **OPEN — owner action**, see `PROJECT_STATUS.md` gate 0 |
+| FG-2 | **HIGH** | The test-count floor could be satisfied by **skipped** tests: jest reports `success: true` with tests skipped, and `numTotalTests` counts pending/todo. A five-character `describe.skip` would disable the whole security suite while the count still read 63. Proven empirically by the reviewer. | **FIXED** — floors gate on `numPassedTests` and reject any pending/todo; fix proven by simulating both the attack (fails) and a genuine run (passes) |
+| FG-3 | MEDIUM-HIGH | The gate declared its job list twice — once in `needs`, once as a hard-coded loop. A job added to `needs` but not the loop would go unchecked while the gate reported success. | **FIXED** — list derived from the `needs` context; empty list fails |
+| FG-4 | MEDIUM | `/health` only proves the process listens. Storefront build-time data paths swallow errors, so a backend failing its store API would still emit a `BUILD_ID` and go green having prerendered nothing. | **FIXED** — the build job requires `/store/regions` to return data first |
+| FG-5 | LOW-MEDIUM | Job-level `env` is echoed in every step's env group, so the throwaway CI JWT secret appeared in plaintext 18 times in a public log. Grants nothing, but normalises printing a signing key. | **FIXED** — masked |
+| FG-6 | MEDIUM (docs) | `CONTRIBUTING.md` claimed `pnpm lint` exits 0; false on a clean checkout (needs a publishable key). | **FIXED** |
+| FG-7 | MEDIUM (docs) | `CONTRIBUTING.md` said `.env.test` alone suffices; `medusa-config.ts` loads `.env`, so `db:migrate` would find no `DATABASE_URL`. | **FIXED** |
+| FG-8 | LOW (inherent) | Under `pull_request`, a fork PR runs the workflow file **from the fork**, so it could replace `ci.yml` with a no-op declaring a job named `CI passed`. Inherent to required status checks. | **OPEN** — mitigate with `CODEOWNERS` on `.github/` + required review (owner gate 0) |
+
+Both CI failures on the first run were real and caught by the gate: storefront
+lint needs a publishable key, and `medusa start` must run from the `.medusa/server`
+standalone output. Both were environment assumptions my local runs had masked.
+
+---
+
 ## Still open
 
 | ID | Severity | Finding | Owner / task |
