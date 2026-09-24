@@ -3,7 +3,7 @@
 ## Executive status
 
 - Phase: Wave 0 — Make the baseline trustworthy
-- State: **ACTIVE** — Day 0, P0-SEC-1 and P0-INF-1 complete and reviewed; P0-SEC-7 (cart ownership) implemented and in review
+- State: **ACTIVE** — Day 0, P0-SEC-1, P0-INF-1 and P0-SEC-7 complete and independently reviewed
 - Overall beta completion: **~12–18%** of the hockey beta path (method and
   confidence in `DAY_0_AUDIT.md` §10). Hockey-specific code: **0%**.
 - Current owner blocker: 7 owner gates open (see below) — none block the first P0 task
@@ -21,6 +21,7 @@
 | Backlog reconciliation | **DONE** | `DAY_0_BACKLOG.md` — 4 waves, dependency-aware, critical path identified |
 | Baseline tests/build | **DONE (with failures recorded)** | install PASS · lint PASS · migrate PASS · build PASS *after P0-1 fix* · **tests 15/15 FAIL** · typecheck **does not exist** |
 | Security/permission baseline | **DONE** | **26 findings, 8 CRITICAL** (5 added by independent QA); `DAY_0_AUDIT.md` §7 |
+| **P0-SEC-7 cart-ID-as-authority** | **COMPLETE — SECURITY APPROVED** | Branch `feat/p0-sec-7-cart-ownership` @ `9f49cdd`; PR [#2](https://github.com/apexvault/hockey-team-sales/pull/2). Security rejected twice with executed exploits, then approved; QA passed with corrections. 5 routes guarded, 20 tests. F-37/F-38/F-42/F-43 explicitly deferred **on the reviewer's word**, not mine |
 | **P0-INF-1 mandatory CI** | **COMPLETE — CI GREEN** | Run [35940269550](https://github.com/apexvault/hockey-team-sales/actions/runs/35940269550), all 6 jobs success. Draft PR [#1](https://github.com/apexvault/hockey-team-sales/pull/1) — review only, **not merged**. Independent review found 2 false-green holes that survived a green run; both fixed and the fix proven by simulation |
 | **P0-SEC-1 company-scoped authorization** | **COMPLETE — APPROVED WITH CONDITIONS** | Security rejected twice, then approved on the third round; QA passed with corrections. Both rejections found real defects. **22 Day 0 findings closed + 10 new found and fixed, 1 verified by test**; conditions tracked in P0-SEC-7. See `SECURITY_FINDINGS.md` |
 | Launch forecast | **DONE** | See below |
@@ -53,6 +54,11 @@
    literal `"supersecret"` outside production (F-20, **P0-SEC-6**).
 6. No invitation or consent step exists for roster attachment, so an admin can
    attach any unaffiliated customer to their team (F-35, **P1-COM-1**).
+7. **Guest carts carrying PII can be copied out permanently** by anyone holding
+   the cart id (F-42) — a stranger can turn a guest cart into an attacker-owned
+   draft order that survives the parent reclaiming the cart. Accepted residual;
+   **must close before any real guest traffic carrying minors' data**, and
+   "before" has to account for copy-out, not merely read.
 7. Employee↔customer duplication is still possible under a race; it needs a DB
    unique constraint (F-34, **P2-DATA-1**). A duplicate would let membership
    resolve to an arbitrary company.
@@ -71,6 +77,22 @@ by an integration test proving a removed employee's still-valid token is refused
 **Retired by P0-SEC-1** (were risks 1-3 and 7): global `company_admin` on signup
 (F-01), React-only approval enforcement (F-06), unauthorized DELETE routes
 (F-02/F-03), and compensation-path privilege escalation (F-22).
+
+## Recommended next P0
+
+**P0-INF-2 — reproducible toolchain**, then **P0-2 — residual fixture debt**.
+Rationale: CI is now the thing protecting 114 tests, and its two known soft spots
+are both in P0-INF-2 — there is no `.nvmrc`, so the Node version lives in the
+workflow rather than the repo, and there is still no `typecheck` job because two
+pre-existing `tsc` errors would make CI red on arrival. Both are cheap and both
+make CI stronger rather than adding surface to defend.
+
+A follow-up worth scheduling, suggested by the security reviewer: the
+cart-id-as-authority rule is currently enforced by *remembering* to register the
+guard on each new route that accepts a `cart_id`. Nothing fails closed for a
+route nobody thought about. A test that enumerates store routes accepting
+`cart_id` and asserts each one is guarded would make the next omission
+impossible — the same shape as the route-verb coverage check in CI.
 
 ## Owner gates open
 
