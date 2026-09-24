@@ -169,10 +169,21 @@ jobs:
             }
             const r = JSON.parse(fs.readFileSync(path, 'utf8'));
             const min = Number(process.env.MIN_UNIT_TESTS);
-            console.log('unit: ' + r.numPassedTests + '/' + r.numTotalTests + ' passed');
+            const skipped = (r.numPendingTests || 0) + (r.numTodoTests || 0);
+            console.log('unit: ' + r.numPassedTests + ' passed, ' + r.numTotalTests + ' total, ' + skipped + ' skipped/todo');
             if (!r.success) { console.error('::error::Unit suite reported failure.'); process.exit(1); }
-            if (r.numTotalTests < min) {
-              console.error('::error::Unit test count ' + r.numTotalTests + ' is below the floor of ' + min + '. Tests were removed or did not run.');
+            // Count PASSED, not total. numTotalTests includes pending and todo,
+            // and jest reports success:true when tests are skipped -- so gating
+            // on the total lets a five-character 'describe.skip' silently
+            // disable a suite while the floor still appears satisfied.
+            if (r.numPassedTests < min) {
+              console.error('::error::Unit PASSED count ' + r.numPassedTests + ' is below the floor of ' + min + '. Tests were removed, skipped, or did not run.');
+              process.exit(1);
+            }
+            // Skipping is never acceptable in CI. Quarantine belongs in a
+            // tracked task, not an invisible edit.
+            if (skipped > 0) {
+              console.error('::error::' + skipped + ' unit test(s) are skipped or todo. CI does not accept skipped tests.');
               process.exit(1);
             }
           "
@@ -220,6 +231,13 @@ jobs:
       AUTH_CORS: http://localhost:9000
 
     steps:
+      # Job-level `env` is echoed by the runner in every step's env group, so
+      # the throwaway signing key would appear in plaintext dozens of times in a
+      # public log. The value grants nothing (ephemeral container), but printing
+      # a JWT secret is a pattern worth not normalising.
+      - name: Mask CI-only secrets
+        run: echo "::add-mask::supersecret"
+
       - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
 
       - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
@@ -295,10 +313,21 @@ jobs:
             }
             const r = JSON.parse(fs.readFileSync(path, 'utf8'));
             const min = Number(process.env.MIN_INTEGRATION_TESTS);
-            console.log('integration: ' + r.numPassedTests + '/' + r.numTotalTests + ' passed');
+            const skipped = (r.numPendingTests || 0) + (r.numTodoTests || 0);
+            console.log('integration: ' + r.numPassedTests + ' passed, ' + r.numTotalTests + ' total, ' + skipped + ' skipped/todo');
             if (!r.success) { console.error('::error::Integration suite reported failure.'); process.exit(1); }
-            if (r.numTotalTests < min) {
-              console.error('::error::Integration test count ' + r.numTotalTests + ' is below the floor of ' + min + '. Tests were removed or did not run.');
+            // Count PASSED, not total. numTotalTests includes pending and todo,
+            // and jest reports success:true when tests are skipped -- so gating
+            // on the total lets a five-character 'describe.skip' silently
+            // disable a suite while the floor still appears satisfied.
+            if (r.numPassedTests < min) {
+              console.error('::error::Integration PASSED count ' + r.numPassedTests + ' is below the floor of ' + min + '. Tests were removed, skipped, or did not run.');
+              process.exit(1);
+            }
+            // Skipping is never acceptable in CI. Quarantine belongs in a
+            // tracked task, not an invisible edit.
+            if (skipped > 0) {
+              console.error('::error::' + skipped + ' integration test(s) are skipped or todo. CI does not accept skipped tests.');
               process.exit(1);
             }
           "
@@ -406,6 +435,30 @@ jobs:
           echo "::add-mask::${KEY}"
           echo "publishable-key=${KEY}" >> "$GITHUB_OUTPUT"
 
+          # /health only proves the process is listening. Every build-time data
+          # path in the storefront swallows errors -- generateStaticParams
+          # catches and returns [], getRegion catches and returns null -- so a
+          # backend answering /health while returning 500 on store endpoints
+          # would still produce a BUILD_ID and a green job, prerendering nothing.
+          # Require the store API to actually serve data before building.
+          REGIONS="$(curl -sf -H "x-publishable-api-key: ${KEY}"             http://localhost:9000/store/regions || echo '')"
+          COUNT="$(printf '%s' "${REGIONS}" | node -e "
+            let s='';
+            process.stdin.on('data', d => s += d);
+            process.stdin.on('end', () => {
+              try {
+                const r = JSON.parse(s);
+                process.stdout.write(String((r.regions || []).length));
+              } catch { process.stdout.write('0'); }
+            });
+          ")"
+          echo "Store API returned ${COUNT} region(s)."
+          if [ "${COUNT}" = "0" ]; then
+            echo "::error::Backend is listening but its store API returned no regions; the storefront build would silently prerender nothing."
+            tail -50 "${RUNNER_TEMP}/medusa.log" || true
+            exit 1
+          fi
+
       - name: Build storefront
         working-directory: apps/storefront
         env:
@@ -451,24 +504,29 @@ jobs:
           set -euo pipefail
           echo "${RESULTS}"
 
-          FAILED=0
-          for job in toolchain lint unit integration build; do
-            RESULT="$(echo "${RESULTS}" | node -e "
-              let s='';
-              process.stdin.on('data', d => s += d);
-              process.stdin.on('end', () => {
-                const n = JSON.parse(s);
-                process.stdout.write((n['${job}'] && n['${job}'].result) || 'missing');
-              });
-            ")"
-            echo "${job}: ${RESULT}"
-            if [ "${RESULT}" != "success" ]; then
-              echo "::error::Required job '${job}' did not succeed (result: ${RESULT})."
-              FAILED=1
-            fi
-          done
+          # The job list is derived from the `needs` context itself -- never
+          # restated here. A second hard-coded list silently stops covering any
+          # job added to `needs` but forgotten in the loop, and that job could
+          # then fail while this gate reports success.
+          node -e "
+            const needs = JSON.parse(process.env.RESULTS);
+            const jobs = Object.keys(needs);
 
-          if [ "${FAILED}" != "0" ]; then
-            exit 1
-          fi
-          echo "All required jobs succeeded."
+            if (jobs.length === 0) {
+              console.error('::error::No upstream jobs found in the needs context.');
+              process.exit(1);
+            }
+
+            let failed = false;
+            for (const job of jobs) {
+              const result = (needs[job] && needs[job].result) || 'missing';
+              console.log(job + ': ' + result);
+              if (result !== 'success') {
+                console.error('::error::Required job ' + job + ' did not succeed (result: ' + result + ').');
+                failed = true;
+              }
+            }
+
+            if (failed) { process.exit(1); }
+            console.log('All ' + jobs.length + ' required jobs succeeded.');
+          "

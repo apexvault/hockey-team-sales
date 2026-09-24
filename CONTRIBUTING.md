@@ -9,14 +9,17 @@ CI is defined in [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
 
 ## Toolchain
 
-Both are pinned by the repository; CI reads them from `package.json` rather than
-restating them, so they cannot drift apart.
+| | Value | Source of truth | How CI gets it |
+|---|---|---|---|
+| Node | **22.12.0** | `engines.node` is a **range** (`^20.19.0 \|\| >=22.12.0`), not a pin | CI hard-codes 22.12.0 and fails if the range ever changes, since a range cannot select a version |
+| pnpm | **9.15.0** | `packageManager` field | read from `package.json` at run time |
+| PostgreSQL | **16** | none — chosen by CI | `postgres:16-alpine` |
 
-| | Value | Source of truth |
-|---|---|---|
-| Node | **22.12.0** | must satisfy `engines.node` (`^20.19.0 \|\| >=22.12.0`) |
-| pnpm | **9.15.0** | `packageManager` field |
-| PostgreSQL | **16** | `postgres:16-alpine` |
+pnpm genuinely cannot drift. **Node can**: there is no `.nvmrc`, so the concrete
+version lives in the workflow. The guard there compares `engines.node` against
+the exact expected range and fails the run if it changes, which forces a
+deliberate re-pin rather than silent drift. Adding an `.nvmrc` would make this
+a real single source of truth (P0-INF-2).
 
 ### `pnpm` is not on PATH by default
 
@@ -56,9 +59,18 @@ have.
 
 ### 2. Lint — CI job `lint`
 
+`next lint` runs `apps/storefront/check-env-variables.js` **before** eslint, and
+that script exits 1 on a missing publishable key. Lint makes no network call, so
+a placeholder is enough — but without it, lint fails for a reason that has
+nothing to do with lint:
+
 ```bash
-pnpm lint
+NEXT_PUBLIC_MEDUSA_PUBLISHABLE_KEY=pk_local_lint_placeholder pnpm lint
 ```
+
+(If you have already created `apps/storefront/.env.local` for step 5, plain
+`pnpm lint` works and picks the key up from there — which is exactly why this
+requirement went unnoticed until CI ran on a clean checkout.)
 
 Expected: exit 0. Warnings are allowed (currently 10 backend + 2 storefront, all
 pre-existing); **errors are not**.
@@ -83,7 +95,12 @@ docker run -d --name hockey-dev-postgres \
   -p 5442:5432 postgres:16-alpine
 ```
 
-Create `apps/backend/.env.test` (git-ignored — see the note below):
+Create **both** `apps/backend/.env` and `apps/backend/.env.test` with the same
+values (both git-ignored). Two files are needed because they are loaded by
+different things: `jest.config.js` calls `loadEnv("test", …)` so the test run
+reads `.env.test`, while `medusa-config.ts` calls
+`loadEnv(process.env.NODE_ENV || "development", …)` — so a bare
+`npx medusa db:migrate` reads `.env` and would otherwise find no `DATABASE_URL`:
 
 ```
 DATABASE_URL=postgres://postgres:postgres@localhost:5442/hockey_medusa
@@ -122,10 +139,15 @@ optional and it is why the broken build went unnoticed for so long.
 
 ```bash
 cd apps/backend
-npx medusa db:migrate          # seeds the publishable key
+npx medusa db:migrate          # also runs the seed script, which creates the publishable key
 pnpm build
 npx medusa develop &           # wait for "Server is ready on port: 9000"
 ```
+
+Use `medusa develop`, not `medusa start`. `medusa build` emits a standalone
+deployable at `.medusa/server`, and `medusa start` expects to run **from that
+directory** — from the project root it fails with *"Could not find index.html in
+the admin build directory"*. CI uses `develop` for the same reason.
 
 Fetch the seeded publishable key and put it in `apps/storefront/.env.local`:
 
@@ -161,11 +183,20 @@ added (P0-INF-2).
 
 ## What CI will not let through
 
-- Any required job that fails, is **skipped**, or is **cancelled**. The `verify`
-  job requires an explicit `success` from each of `toolchain`, `lint`, `unit`,
-  `integration`, `build`. **Protect the `verify` job, not the individual jobs** —
-  a branch rule naming the individual jobs goes green when they never run.
+- Any required job that fails, is **skipped**, or is **cancelled**. The gate job
+  requires an explicit `success` from every job in its `needs` list, derived from
+  that list rather than restated.
+
+  **Protect the status check named `CI passed`** — that is the job's display
+  name and the string GitHub offers in the branch-protection UI. Protecting the
+  individual jobs instead is unsafe: a rule naming them goes green when those
+  jobs are skipped or cancelled, because GitHub reports neither failure nor
+  success for them.
 - A test run that finds **no tests**. `--passWithNoTests` is deliberately unset.
+- A test run that is **padded with skipped tests**. Both suites enforce a floor
+  on *passed* tests and reject any `numPendingTests`/`numTodoTests` above zero.
+  Gating on the total would let a `describe.skip` disable a whole suite while the
+  count still looked satisfied.
 - A migration that exits 0 without creating a schema. CI asserts the database is
   empty beforehand, then asserts ≥100 tables and all seven custom module tables
   afterwards.
