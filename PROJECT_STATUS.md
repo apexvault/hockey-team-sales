@@ -1,14 +1,78 @@
 # Project Status
 
+# ⛔ PAUSED — REFERENCE ONLY
+
+**Owner decision, 2026-09-23.** Work on this application is **paused**.
+`rbk-team-sales` is now the primary Apex Apparel platform. This repository is
+retained as a **reference implementation and audit record only**.
+
+No further feature or security work is authorised. P0-INF-2, P0-2, F-42, F-43,
+F-37 and F-38 are all **deferred** — see "Deferred work" below.
+
+---
+
+## 🚫 PROHIBITED USES
+
+This application **must not** receive any of the following, in any environment,
+until the open critical findings below are closed and re-reviewed:
+
+| Prohibited | |
+|---|---|
+| **Real users** | No production or invited user accounts |
+| **Guest traffic** | F-42 is an open, accepted residual — guest carts carrying PII can be copied out permanently |
+| **Payments** | No payment provider is registered, and F-43 permits unauthenticated payment-session creation |
+| **Rosters** | No invitation or consent flow exists (F-35) |
+| **Minors' data** | Follows directly from the two above; this is the binding constraint |
+| **Production deployment** | No deployment mechanism exists, and `main` has no branch protection |
+
+This is not a precaution about hypothetical risk. Each row maps to a specific
+open finding with a working proof of concept, recorded in `SECURITY_FINDINGS.md`.
+
+---
+
 ## Executive status
 
-- Phase: Wave 0 — Make the baseline trustworthy
-- State: **ACTIVE** — Day 0, P0-SEC-1, P0-INF-1 and P0-SEC-7 complete and independently reviewed
+- Phase: Wave 0 — **halted** partway
+- State: **PAUSED — REFERENCE ONLY**
 - Overall beta completion: **~12–18%** of the hockey beta path (method and
   confidence in `DAY_0_AUDIT.md` §10). Hockey-specific code: **0%**.
-- Current owner blocker: 7 owner gates open (see below) — none block the first P0 task
-- Production status: No deployment authorized; **no deployment mechanism exists**
-- Next milestone: Wave 0 complete — remaining: **branch protection (owner gate 0)**, P0-INF-2 (toolchain), P0-2 (residual fixture debt), P0-SEC-6 (secrets), P0-SEC-7 remainder (F-37/F-38/F-42/F-43)
+- Production status: **No deployment authorized; no deployment mechanism exists;
+  prohibited per the table above**
+- Work completed and independently reviewed before the pause: Day 0, P0-SEC-1,
+  P0-INF-1, P0-SEC-7
+
+## ⚠️ OPEN CRITICAL FINDINGS AT PAUSE
+
+Four findings are **open** and were deliberately deferred with the security
+reviewer's explicit agreement. None is theoretical — each was demonstrated
+against a running server. Full detail in `SECURITY_FINDINGS.md`.
+
+| ID | Severity | What it is | Why it matters on resume |
+|---|---|---|---|
+| **F-42** | **MEDIUM — gating** | **Guest carts carrying PII can be read, claimed, and COPIED OUT PERMANENTLY by anyone holding the cart id.** A stranger can `POST /store/quotes` with a guest cart id and receive a durable attacker-owned draft order containing the basket — and the real customer later registering and claiming the cart **does not revoke it**. | This is the binding constraint on guest traffic and minors' data. "Close before real traffic" must account for **copy-out**, not merely read. Fix needs a server-set cart nonce, or requiring a claimant's authenticated email to match `cart.email`. |
+| **F-43** | **MEDIUM** | **`POST /store/payment-collections/:id/payment-sessions` is unguarded and WRITES.** With a collection id, an unauthenticated caller reads the victim's basket `amount` and creates payment sessions on their collection, each carrying `context.customer` = the attacker. | Independent of the leak, this is a cost and abuse vector against a real PSP, plus a payment-confusion risk. Deferrable **only** because every acquisition path for an owned cart's collection id is closed and `pay_col_<ULID>` is not guessable — the remaining route to one is a guest cart, i.e. F-42. Fix is one `cart_payment_collection` link hop. |
+| **F-37** | LOW | `StoreUpdateApproval.status` is a bare `z.string()`, not a native enum, and `ensureApprovalAccess` ignores `approval.status` — so an already-decided approval can be re-decided. | Fails closed against the completion rule today, but the column is modelled as an enum. Not cart-id-as-authority; swept into P0-SEC-7 by proximity, not by class. |
+| **F-38** | LOW | `set-admin-role` still writes a non-company-scoped `role` marker into `user_metadata`. | Nothing reads it for authorization any more, but any future consumer re-opens F-01/F-22 — the two most severe findings of the whole audit. |
+
+Also still open, from earlier waves: **F-18** (no admin role granularity),
+**F-19** (no upload capability), **F-20** (empty `JWT_SECRET` falls back to the
+literal `"supersecret"` outside production), **F-34** (employee↔customer
+duplication race needs a DB unique constraint), **F-35** (no invitation/consent
+for roster attachment).
+
+---
+
+## Deferred work
+
+Explicitly **not started**, by owner decision:
+
+| Item | What it was | Why it matters later |
+|---|---|---|
+| **P0-INF-2** | Reproducible toolchain: add `.nvmrc` (the Node version currently lives in the CI workflow, not the repo), add a `typecheck` script and CI job, add `cross-env` so backend test scripts run on Windows, add `docker-compose.yml` for Postgres | Two pre-existing `tsc` errors currently block adding the typecheck job — it would make CI red on arrival. Those must be fixed first. |
+| **P0-2** | Residual test-fixture debt: decouple `integration-tests/utils/admin.ts` from the hardcoded `JWT_SECRET="supersecret"`; remove the three committed `console.log("vic logs …")` statements in `companies.spec.ts` | The JWT coupling is the single most confusing failure mode for a newcomer — a mismatch 401s every admin request and looks nothing like its cause. |
+| **Fail-closed cart-route test** | A test that enumerates every store route accepting a `cart_id` and asserts each one is guarded | **The highest-value deferred item.** The cart-id-as-authority rule is currently enforced by *remembering* to register the guard on each new route. Nothing fails closed for a route nobody thought about — which is exactly how `/store/shipping-options` was missed after three other routes had been fixed. Same shape as the route-verb coverage check already in CI. |
+
+---
 
 ## Day 0 tracker
 
@@ -78,7 +142,74 @@ by an integration test proving a removed employee's still-valid token is refused
 (F-01), React-only approval enforcement (F-06), unauthorized DELETE routes
 (F-02/F-03), and compensation-path privilege escalation (F-22).
 
-## Recommended next P0
+## 🔄 HOW TO RESUME SAFELY
+
+Read this section first. The order matters and is not arbitrary.
+
+### Step 0 — verify nothing drifted
+```bash
+git fetch origin
+git log --oneline origin/main -1          # expect 7f36e09, unchanged
+git status --short                        # expect empty
+```
+`main` must still be `7f36e09a8aacd5083481f2c75d40c9a4305fc99c`. Four branches
+and two draft PRs carry all the work; **nothing was merged**.
+
+### Step 1 — restore the local environment
+```bash
+corepack enable                           # pnpm is NOT on PATH without this
+docker start hockey-day0-postgres         # stopped at pause, NOT deleted; data intact
+pnpm install --frozen-lockfile
+```
+Then follow `CONTRIBUTING.md` exactly — it documents the two things that are not
+discoverable (pnpm via corepack, and `JWT_SECRET` must be exactly `supersecret`
+or every integration test 401s).
+
+Expected once running: **86/86 integration, 28/28 unit, lint 0 errors, build 2/2.**
+
+### Step 2 — required branch order and dependency chain
+
+Each branch is cut from the previous one, so they must be reviewed and merged
+**in this order**. Merging out of order will produce conflicts and, worse, could
+land a security fix without the boundary it depends on.
+
+```
+main (7f36e09)
+  └─ chore/day-0-baseline-audit          audit + broken-build fix + .gitignore
+       └─ feat/p0-sec-1-company-scoped-authorization    the tenant boundary
+            └─ feat/p0-inf-1-mandatory-ci               CI + LAST_ADMINISTRATOR
+                 └─ feat/p0-sec-7-cart-ownership        cart-ID-as-authority
+```
+
+**PR #2 targets `main`, not PR #1.** Its diff against `main` therefore contains
+every commit above it — merging #2 merges the whole chain. Decide that
+deliberately; do not discover it at merge time.
+
+Dependency reasoning, so the order is not treated as cosmetic:
+1. **Day 0 first** — it contains the fix without which `pnpm build` fails at all.
+2. **P0-SEC-1 before anything else** — every later guard derives the caller's
+   company from `resolveCompanyMembership`. Without it the other branches import
+   a boundary that does not exist.
+3. **P0-INF-1 before further feature work** — it is what stops a broken build or
+   a disabled test suite reaching `main` again, which is how both shipped
+   unnoticed originally.
+4. **P0-SEC-7 last** — it extends P0-SEC-1's rule to cart-id-keyed routes and
+   raises the CI test floor set by P0-INF-1.
+
+### Step 3 — owner actions still outstanding
+- **Enable branch protection on `main`** (gate 0 below). Until then CI is green
+  but blocks nothing. Protect the check named **`CI passed`**, not the
+  individual jobs.
+- **Answer the multi-organization design question** (D-015/D-019 in
+  `DECISIONS.md`) before any further authorization work.
+
+### Step 4 — before any real traffic
+Close **F-42** and **F-43**, and have both re-reviewed independently. The
+prohibition table at the top of this file is the acceptance gate, not advice.
+
+---
+
+## Recommended next P0 (when resumed)
 
 **P0-INF-2 — reproducible toolchain**, then **P0-2 — residual fixture debt**.
 Rationale: CI is now the thing protecting 114 tests, and its two known soft spots

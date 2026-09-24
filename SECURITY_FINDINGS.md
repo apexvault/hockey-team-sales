@@ -1,5 +1,15 @@
 # Security Findings Register
 
+> ## ⛔ PROJECT PAUSED — REFERENCE ONLY (2026-09-23)
+>
+> Work is paused by owner decision; `rbk-team-sales` is the primary platform.
+> **Four findings are OPEN: F-42, F-43, F-37, F-38.**
+>
+> This application is **prohibited** from receiving real users, guest traffic,
+> payments, rosters, minors' data, or production deployment. F-42 (guest-cart
+> contents can be copied out permanently) and F-43 (unauthenticated payment-session
+> creation) are the binding constraints. See `PROJECT_STATUS.md`.
+
 Live status of every security finding. The Day 0 evidence record in
 `DAY_0_AUDIT.md` §7 is immutable and describes each finding as originally
 discovered; this file tracks remediation.
