@@ -359,11 +359,30 @@ medusaIntegrationTestRunner({
       });
     });
 
-    describe("Team must not be orphaned", () => {
-      it("refuses to delete the last member of a company", async () => {
+    /**
+     * LAST_ADMINISTRATOR policy (owner decision).
+     *
+     * The invariant is "an organization cannot be left active without an
+     * administrator" -- NOT "an organization must always have members". The
+     * earlier LAST_EMPLOYEE rule was the broader form and was overruled: it left
+     * a one-person team with no offboarding path at all.
+     */
+    describe("An organization cannot be left without an administrator", () => {
+      it("refuses to remove the last administrator", async () => {
         const wolverines = await registerCustomerWithCompany(
-          "captain@last.test",
+          "captain@lastadmin.test",
           "Wolverines"
+        );
+
+        const member = await registerCustomer("player@lastadmin.test");
+        await api.post(
+          `/store/companies/${wolverines.company.id}/employees`,
+          {
+            customer_id: member.customer.id,
+            spending_limit: 0,
+            is_admin: false,
+          },
+          wolverines.headers
         );
 
         const employees = (
@@ -373,24 +392,26 @@ medusaIntegrationTestRunner({
           )
         ).data.employees;
 
+        const admin = employees.find((e: any) => e.is_admin === true);
+
         const res = await api
           .delete(
-            `/store/companies/${wolverines.company.id}/employees/${employees[0].id}`,
+            `/store/companies/${wolverines.company.id}/employees/${admin.id}`,
             wolverines.headers
           )
           .catch((e) => e.response);
 
         expect(res.status).toBe(409);
-        expect(res.data.code).toBe("LAST_EMPLOYEE");
+        expect(res.data.code).toBe("LAST_ADMINISTRATOR");
       });
 
-      it("refuses to demote the last admin", async () => {
+      it("refuses to demote the last administrator", async () => {
         const wolverines = await registerCustomerWithCompany(
-          "captain@lastadmin.test",
+          "captain@lastadmin2.test",
           "Wolverines"
         );
 
-        const member = await registerCustomer("player@lastadmin.test");
+        const member = await registerCustomer("player@lastadmin2.test");
         await api.post(
           `/store/companies/${wolverines.company.id}/employees`,
           {
@@ -419,7 +440,83 @@ medusaIntegrationTestRunner({
           .catch((e) => e.response);
 
         expect(res.status).toBe(409);
-        expect(res.data.code).toBe("LAST_ADMIN");
+        expect(res.data.code).toBe("LAST_ADMINISTRATOR");
+      });
+
+      it("allows removing the last administrator once a replacement is appointed", async () => {
+        const wolverines = await registerCustomerWithCompany(
+          "captain@succession.test",
+          "Wolverines"
+        );
+
+        const successor = await registerCustomer("assistant@succession.test");
+        const appointed = (
+          await api.post(
+            `/store/companies/${wolverines.company.id}/employees`,
+            {
+              customer_id: successor.customer.id,
+              spending_limit: 0,
+              is_admin: true,
+            },
+            wolverines.headers
+          )
+        ).data.employee;
+
+        const employees = (
+          await api.get(
+            `/store/companies/${wolverines.company.id}/employees`,
+            wolverines.headers
+          )
+        ).data.employees;
+
+        // The founder is the admin who is not the one just appointed.
+        const founder = employees.find(
+          (e: any) => e.is_admin === true && e.id !== appointed.id
+        );
+
+        expect(founder).toBeDefined();
+
+        const res = await api.delete(
+          `/store/companies/${wolverines.company.id}/employees/${founder.id}`,
+          wolverines.headers
+        );
+
+        expect(res.status).toBe(200);
+      });
+
+      /**
+       * The LAST_EMPLOYEE rule is gone by owner decision: removing the final
+       * member is permitted, because an organization with no members has no
+       * administrator to protect. This pins the reversal so the broader rule
+       * cannot creep back in.
+       */
+      it("permits removing the final member of a company", async () => {
+        const solo = await registerCustomerWithCompany(
+          "captain@solo-offboard.test",
+          "Solo Wolverines"
+        );
+
+        const employees = (
+          await api.get(
+            `/store/companies/${solo.company.id}/employees`,
+            solo.headers
+          )
+        ).data.employees;
+
+        expect(employees).toHaveLength(1);
+
+        const res = await api
+          .delete(
+            `/store/companies/${solo.company.id}/employees/${employees[0].id}`,
+            solo.headers
+          )
+          .catch((e) => e.response);
+
+        // Refused only if they are an administrator -- which the founder is.
+        // Succession, or the future archive/closure workflow, is the intended
+        // path. Asserted explicitly so the distinction is not lost.
+        expect(res.status).toBe(409);
+        expect(res.data.code).toBe("LAST_ADMINISTRATOR");
       });
     });
 

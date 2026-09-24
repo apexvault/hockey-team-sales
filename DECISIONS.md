@@ -33,6 +33,50 @@
 | D-013 | Authorization rework | point fixes vs. structural | **Structural** — one `ensureCompanyAccess` middleware; forbid reading tenant ids from `req.params`/`req.body` in `/store/**` | Nine findings share one root cause; point fixes leave the next route exposed | `DAY_0_AUDIT.md` §7 |
 | D-014 | Seed regions | keep EU / migrate to US-CA | **Migrate to US/CA** and make the seed idempotent | MASTER_SPEC targets US and Canada | Seed creates `gb,de,dk,se,fr,es,it` only |
 
+## Approved — owner decisions (2026-09-23, post P0-SEC-1)
+
+| ID | Decision | Status | Implementation |
+|---|---|---|---|
+| D-015 | A customer may belong to and manage **multiple** companies, organizations or teams. | **Approved** | **NOT YET IMPLEMENTED** — see the design gate below |
+| D-016 | Replace the broad `LAST_EMPLOYEE` policy with a `LAST_ADMINISTRATOR` policy. | **Approved** | **DONE** — removing the final *member* is permitted; only removing or demoting the last *administrator* is refused |
+| D-017 | An organization cannot be left active without an administrator. | **Approved** | **DONE** — enforced on both the delete and demote paths |
+| D-018 | The final administrator must appoint a replacement, or use a future controlled archive/closure workflow. | **Approved** | **PARTIAL** — succession works and is tested; the archive/closure workflow does not exist, so there is currently no self-service way to wind an organization down |
+| D-019 | Do not hard-code a one-customer/one-company assumption. | **Approved** | **NOT YET IMPLEMENTED** — current code violates this; see below |
+| D-020 | No real roster data for minors may be loaded until verified invitation/consent is implemented **and reviewed**. | **Approved** | Gate recorded; F-35 / P1-COM-1 is the implementing task |
+
+### D-015 / D-019 — not implemented, and why
+
+P0-SEC-1 shipped a deliberate single-company model. Three places enforce it:
+`POST /store/companies` returns 409 when the caller already belongs to a company;
+employee creation refuses an already-affiliated customer; and
+`resolveCompanyMembership` resolves `customer.employee` to **one** employee and
+therefore one company. The employee↔customer module link is also declared
+non-list.
+
+Lifting this is a model change, not a flag. Every guard that currently compares
+"the caller's company" to a path parameter must instead test membership of a
+**set**, and the link cardinality and its DB constraint change with it.
+
+**It also opens a design question that is an owner decision, not an engineering
+one:** if a customer belongs to three teams, which team's approval settings and
+spending limit govern a given cart, and which team is the resulting order
+attributed to? Cart→company attribution is currently derived server-side from
+the customer's single employee record precisely because deriving it from
+client-supplied input was the F-27/F-28 vulnerability. With multiple
+memberships, the customer must *choose* a team per cart — and that choice must
+be validated against their memberships rather than trusted.
+
+Recommended options, for the owner to pick before implementation:
+1. **Explicit per-cart organization selection**, validated against the caller's
+   memberships (recommended — keeps derivation server-side and auditable).
+2. A per-customer "active organization" on the session, switched deliberately.
+3. Attribute to the organization that owns the sales channel or price list in
+   play (least explicit; not recommended).
+
+Tracked as **P0-SEC-8 — multi-organization membership**, sequenced after
+P0-SEC-7 and gated on that choice. Until then the single-company assumption
+remains in force and is *documented* rather than silently assumed.
+
 ## Conflicts recorded
 
 - **ARCHITECTURE.md says "Prisma where already used".** The actual ORM is

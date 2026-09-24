@@ -62,8 +62,9 @@ export const POST = async (
 
     if (!otherAdminExists) {
       return res.status(409).json({
-        message: "Cannot remove the last admin of a company.",
-        code: "LAST_ADMIN",
+        message:
+          "Cannot demote the last administrator. Appoint a replacement first.",
+        code: "LAST_ADMINISTRATOR",
       });
     }
   }
@@ -115,18 +116,6 @@ export const DELETE = async (
     return res.status(403).json({ message: "Forbidden" });
   }
 
-  /**
-   * Refuse to orphan the team.
-   *
-   * Nothing previously stopped an admin deleting themselves, including as the
-   * last member or the last admin. A company with members but no admin is
-   * permanently unadministrable -- nobody can promote a replacement, and the
-   * remaining members cannot found a new team because they are still
-   * affiliated. A company with no employees at all is unreachable by anyone,
-   * while its roster, carts and orders stay in the database with no one able to
-   * view or erase them. For youth rosters that is a data-retention problem, not
-   * just an availability one.
-   */
   const { data: roster } = await query.graph({
     entity: "employee",
     fields: ["id", "is_admin"],
@@ -135,20 +124,29 @@ export const DELETE = async (
 
   const remaining = (roster ?? []).filter((e: any) => e?.id !== employeeId);
 
-  if (remaining.length === 0) {
-    return res.status(409).json({
-      message: "Cannot remove the last member of a company.",
-      code: "LAST_EMPLOYEE",
-    });
-  }
-
+  /**
+   * LAST_ADMINISTRATOR policy (owner decision).
+   *
+   * The earlier LAST_EMPLOYEE rule was too broad: it blocked removing the final
+   * member even when that left nothing to administer, which gave a one-person
+   * team no offboarding path at all. The owner replaced it with a narrower
+   * invariant -- *an organization cannot be left active without an
+   * administrator* -- so removing the last member is allowed, and only removing
+   * the last ADMINISTRATOR is refused.
+   *
+   * The final administrator must appoint a replacement, or use the controlled
+   * archive/closure workflow once that exists. Until it does, there is
+   * deliberately no self-service way to wind an organization down; that is a
+   * known gap, not an oversight.
+   */
   if (
     target.is_admin === true &&
     !remaining.some((e: any) => e?.is_admin === true)
   ) {
     return res.status(409).json({
-      message: "Cannot remove the last admin of a company.",
-      code: "LAST_ADMIN",
+      message:
+        "Cannot remove the last administrator. Appoint a replacement first.",
+      code: "LAST_ADMINISTRATOR",
     });
   }
 
