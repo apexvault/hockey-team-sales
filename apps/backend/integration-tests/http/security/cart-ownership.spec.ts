@@ -534,6 +534,72 @@ medusaIntegrationTestRunner({
         expect(real.data?.message).toBe(fake.data?.message);
       });
 
+      /**
+       * The same oracle as free-shipping, one URL over. Both call
+       * `listShippingOptionsForCartWorkflow` on a caller-supplied cart_id, and
+       * this is the more direct of the two -- its 404 even echoed the probed
+       * cart id back. Guarding one and not the other would have made "F-36
+       * fixed" untrue.
+       */
+      it("denies listing shipping options for another customer's cart", async () => {
+        const victim = await registerCustomer("victim@shipopt.test");
+        const attacker = await registerCustomer("attacker@shipopt.test");
+
+        const cart = await createOwnedCart(victim);
+
+        const res = await api
+          .get(`/store/shipping-options?cart_id=${cart.id}`, attacker.headers)
+          .catch((e) => e.response);
+        expect(res.status).toBe(403);
+
+        const anon = await api
+          .get(`/store/shipping-options?cart_id=${cart.id}`, storeHeaders)
+          .catch((e) => e.response);
+        expect(anon.status).toBe(403);
+      });
+
+      it("no longer distinguishes a real cart from an unknown one on shipping options", async () => {
+        const victim = await registerCustomer("victim2@shipopt.test");
+        const attacker = await registerCustomer("attacker2@shipopt.test");
+        const cart = await createOwnedCart(victim);
+
+        const real = await api
+          .get(`/store/shipping-options?cart_id=${cart.id}`, attacker.headers)
+          .catch((e) => e.response);
+        const fake = await api
+          .get(
+            "/store/shipping-options?cart_id=cart_01DOESNOTEXIST",
+            attacker.headers
+          )
+          .catch((e) => e.response);
+
+        // Previously 200 vs a 404 that echoed the probed id back.
+        expect(real.status).toBe(403);
+        expect(fake.status).toBe(403);
+        expect(real.data?.message).toBe(fake.data?.message);
+        expect(JSON.stringify(fake.data ?? {})).not.toContain(
+          "cart_01DOESNOTEXIST"
+        );
+      });
+
+      it("still allows listing shipping options for your own and for anonymous carts", async () => {
+        // Guest checkout calls this route with an unclaimed cart; it must work.
+        const anonCart = await createAnonymousCart();
+        const anonRes = await api.get(
+          `/store/shipping-options?cart_id=${anonCart.id}`,
+          storeHeaders
+        );
+        expect(anonRes.status).toBe(200);
+
+        const shopper = await registerCustomer("shopper@shipopt.test");
+        const ownCart = await createOwnedCart(shopper);
+        const ownRes = await api.get(
+          `/store/shipping-options?cart_id=${ownCart.id}`,
+          shopper.headers
+        );
+        expect(ownRes.status).toBe(200);
+      });
+
       it("denies creating a payment collection on another customer's cart", async () => {
         const victim = await registerCustomer("victim@paycol.test");
         const attacker = await registerCustomer("attacker@paycol.test");

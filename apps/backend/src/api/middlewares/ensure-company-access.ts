@@ -284,7 +284,7 @@ export const ensureEmployeeInCompany = (
 };
 
 /**
- * Require that the cart named in the path belongs to the caller.
+ * Require that the cart named in the path is not another customer's.
  *
  * POLICY (settled in P0-SEC-7): **a cart belongs to one customer, not to a
  * company.** An earlier version also admitted any member of the cart owner's
@@ -340,7 +340,22 @@ export const ensureCartAccess = (options: { param?: string } = {}) => {
         return next();
       }
 
-      // A cart with no customer is still claimable; core owns that flow.
+      /**
+       * An anonymous cart has no owner to protect, so it is allowed through.
+       *
+       * Be honest that this is a LOOSENING relative to the previous version of
+       * this guard, which denied it: a caller can now bulk-add to an unclaimed
+       * cart they did not create. It is consistent with core -- the non-bulk
+       * `/store/carts/:id/line-items` already permits exactly this -- and the
+       * cart-freeze vector P0-SEC-1 worried about is not reachable, because
+       * creating an approval on an anonymous cart fails with "No enabled
+       * approval types found" (no company, so no approval types apply).
+       *
+       * The alternative is to deny here and let `ensureCartNotOwnedByAnother`
+       * own anonymous carts, at the cost of refusing an authenticated shopper
+       * bulk-adding to a cart they have not yet claimed. Chosen deliberately in
+       * favour of not breaking that flow.
+       */
       if (!cart.customer_id) {
         return next();
       }
