@@ -347,6 +347,93 @@ export const ensureCartAccess = (options: { param?: string } = {}) => {
 };
 
 /**
+ * Refuse any cart that already belongs to a *different* account holder.
+ *
+ * P0-SEC-7. Core's `POST /store/carts/:id/customer` passes `req.params.id`
+ * straight into `transferCartCustomerWorkflow` and then returns the full
+ * refetched cart, so possession of a cart id was sufficient authority to claim
+ * somebody else's basket **and read its contents**. Every other
+ * `/store/carts/:id*` route had the same shape: the id was the only credential.
+ *
+ * Why this is not simply `ensureCartAccess`: a guest cart has no customer and no
+ * company, so requiring ownership would break anonymous shopping and the
+ * anonymous → authenticated transition that P0-SEC-1 just repaired. Medusa's
+ * model is that for an *unclaimed* cart the id legitimately is the bearer token.
+ * The rule that holds in both worlds is narrower:
+ *
+ *   allow  - the cart has no customer at all (anonymous), or
+ *   allow  - the cart's customer is a guest record (`has_account === false`),
+ *            which is precisely the claimable state, or
+ *   allow  - the cart's customer IS the caller (idempotent re-claim, normal use)
+ *   deny   - anything else: it belongs to another account holder
+ *
+ * Core's own transfer workflow queries `customer.has_account` and then never
+ * uses it, which suggests upstream intended this check and did not finish it.
+ *
+ * Applied to the whole `/store/carts/:id` surface rather than just the transfer
+ * route, because "claim, transfer or inspect" are all reachable through it and
+ * fixing one verb would leave the same hole on the others.
+ */
+export const ensureCartNotOwnedByAnother = (
+  options: { param?: string } = {}
+) => {
+  const { param = "id" } = options;
+
+  return async (
+    req: CompanyScopedRequest,
+    res: MedusaResponse,
+    next: MedusaNextFunction
+  ) => {
+    try {
+      const cartId = req.params?.[param];
+
+      if (!cartId) {
+        return forbid(res);
+      }
+
+      const query = req.scope.resolve(ContainerRegistrationKeys.QUERY);
+
+      const { data } = await query.graph({
+        entity: "cart",
+        fields: ["id", "customer_id", "customer.id", "customer.has_account"],
+        filters: { id: cartId },
+      });
+
+      const cart = data?.[0];
+
+      // An unknown cart is refused with the same uniform denial as a forbidden
+      // one, so the endpoint cannot be used to test which cart ids exist.
+      if (!cart) {
+        return forbid(res);
+      }
+
+      const owner = (cart as any).customer;
+      const ownerId = owner?.id ?? cart.customer_id;
+
+      // Anonymous cart -- unclaimed, the id is the bearer by design.
+      if (!ownerId) {
+        return next();
+      }
+
+      // Guest customer record: still claimable.
+      if (owner && owner.has_account === false) {
+        return next();
+      }
+
+      const callerId = getAuthenticatedCustomerId(req);
+
+      if (callerId && callerId === ownerId) {
+        return next();
+      }
+
+      return forbid(res);
+    } catch {
+      return forbid(res);
+    }
+  };
+};
+
+/**
  * Require that the approval named in the path belongs to a cart owned by the
  * caller's company, and that the caller is a company admin of that company.
  *

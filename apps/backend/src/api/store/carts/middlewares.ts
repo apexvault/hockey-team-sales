@@ -7,6 +7,7 @@ import { MiddlewareRoute } from "@medusajs/medusa";
 import {
   attachCompanyScope,
   ensureCartAccess,
+  ensureCartNotOwnedByAnother,
 } from "../../middlewares/ensure-company-access";
 import { retrieveCartTransformQueryConfig } from "./query-config";
 import {
@@ -30,6 +31,27 @@ import {
  * Both now require authentication and cart ownership.
  */
 export const storeCartsMiddlewares: MiddlewareRoute[] = [
+  /**
+   * P0-SEC-7. Possession of a cart id is never authority over a cart that
+   * already belongs to another account holder -- for claiming, transferring,
+   * inspecting or mutating it.
+   *
+   * Registered on BOTH the bare `:id` route and everything beneath it. Core
+   * exposes `/store/carts/:id` (GET, POST), `/customer`, `/line-items`,
+   * `/line-items/:line_id`, `/promotions`, `/taxes`, `/shipping-methods` and
+   * `/complete` -- guarding only the transfer route would leave the same hole
+   * on all of them, which is how the original cart sweep missed this one.
+   */
+  {
+    method: "ALL",
+    matcher: "/store/carts/:id",
+    middlewares: [ensureCartNotOwnedByAnother()],
+  },
+  {
+    method: "ALL",
+    matcher: "/store/carts/:id/*",
+    middlewares: [ensureCartNotOwnedByAnother()],
+  },
   {
     method: ["POST"],
     matcher: "/store/carts/:id/line-items/bulk",

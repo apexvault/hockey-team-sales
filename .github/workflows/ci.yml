@@ -301,7 +301,7 @@ jobs:
         if: always()
         working-directory: apps/backend
         env:
-          MIN_INTEGRATION_TESTS: "63"
+          MIN_INTEGRATION_TESTS: "76"
         run: |
           set -euo pipefail
           node -e "
