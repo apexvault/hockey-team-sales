@@ -145,14 +145,16 @@ medusaIntegrationTestRunner({
         });
       });
 
-      it("should throw error when company does not exist", async () => {
+      // P0-SEC-1 behaviour change: 404 -> 403.
+      // A 404 for an absent company but 403 for someone else's company turns the
+      // endpoint into an existence oracle -- a caller could enumerate which
+      // teams exist on the platform. Both now return the same uniform denial.
+      it("returns a uniform denial when the company does not exist", async () => {
         const { response } = await api
           .get(`/store/companies/does-not-exist`, storeHeaders)
           .catch((e) => e);
 
-        expect(response.data).toMatchObject({
-          type: "not_found",
-        });
+        expect(response.status).toEqual(403);
       });
     });
 
@@ -215,7 +217,8 @@ medusaIntegrationTestRunner({
         });
       });
 
-      it("should throw an error when company does not exist", async () => {
+      // P0-SEC-1 behaviour change: 404 -> 403 (uniform denial, see above).
+      it("returns a uniform denial when updating a company that does not exist", async () => {
         const { response } = await api
           .post(
             `/store/companies/does-not-exist`,
@@ -224,9 +227,7 @@ medusaIntegrationTestRunner({
           )
           .catch((e) => e);
 
-        expect(response.data).toMatchObject({
-          type: "not_found",
-        });
+        expect(response.status).toEqual(403);
       });
     });
 
@@ -265,12 +266,17 @@ medusaIntegrationTestRunner({
         expect(response.status).toEqual(204);
       });
 
-      it("should throw an error when company does not exist", async () => {
+      // P0-SEC-1 behaviour change: 204 -> 403.
+      // This test was named "should throw an error" but asserted 204 -- deleting
+      // a company that does not exist reported success. DELETE now requires
+      // company-scoped admin authority, so an unknown id is denied like any
+      // other company the caller does not administer.
+      it("returns a uniform denial when deleting a company that does not exist", async () => {
         const response = await api
           .delete(`/store/companies/does-not-exist`, storeHeaders)
-          .catch((e) => e);
+          .catch((e) => e.response);
 
-        expect(response.status).toEqual(204);
+        expect(response.status).toEqual(403);
       });
     });
   },

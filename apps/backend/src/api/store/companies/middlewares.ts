@@ -4,7 +4,11 @@ import {
   validateAndTransformQuery,
 } from "@medusajs/framework";
 import { authenticate } from "@medusajs/medusa";
-import { ensureRole } from "../../middlewares/ensure-role";
+import {
+  attachCompanyScope,
+  ensureCompanyAccess,
+  ensureEmployeeInCompany,
+} from "../../middlewares/ensure-company-access";
 import {
   storeCompanyQueryConfig,
   storeEmployeeQueryConfig,
@@ -15,17 +19,38 @@ import {
   StoreGetCompanyParams,
   StoreGetEmployeeParams,
   StoreUpdateApprovalSettings,
+  StoreUpdateCompany,
   StoreUpdateEmployee,
 } from "./validators";
 
+/**
+ * P0-SEC-1: every exported verb under /store/companies has an explicit
+ * authorization entry. Medusa registers any verb exported from a route.ts
+ * whether or not a middleware entry names it, so an omission here is a live
+ * unauthenticated-by-authorization hole, not a no-op.
+ *
+ * Verb inventory, kept in sync with the route files:
+ *   /store/companies                                GET, POST
+ *   /store/companies/:id                            GET, POST, DELETE
+ *   /store/companies/:id/employees                  GET, POST
+ *   /store/companies/:id/employees/:employeeId      GET, POST, DELETE
+ *   /store/companies/:id/approval-settings          POST
+ */
 export const storeCompaniesMiddlewares: MiddlewareRoute[] = [
-  /* Company middlewares */
+  /* All company routes require an authenticated customer, and carry the
+   * caller's server-derived company scope. */
   {
     method: "ALL",
     matcher: "/store/companies*",
-    middlewares: [authenticate("customer", ["session", "bearer"])],
+    middlewares: [
+      authenticate("customer", ["session", "bearer"]),
+      attachCompanyScope,
+    ],
   },
+
+  /* Company collection */
   {
+    // Listing is scoped to the caller's own company inside the handler.
     method: ["GET"],
     matcher: "/store/companies",
     middlewares: [
@@ -36,6 +61,9 @@ export const storeCompaniesMiddlewares: MiddlewareRoute[] = [
     ],
   },
   {
+    // Company creation is the one route without a prior company: the caller
+    // becomes the founding admin. The handler rejects callers who already
+    // belong to a company.
     method: ["POST"],
     matcher: "/store/companies",
     middlewares: [
@@ -46,10 +74,13 @@ export const storeCompaniesMiddlewares: MiddlewareRoute[] = [
       ),
     ],
   },
+
+  /* Single company */
   {
     method: ["GET"],
     matcher: "/store/companies/:id",
     middlewares: [
+      ensureCompanyAccess(),
       validateAndTransformQuery(
         StoreGetCompanyParams,
         storeCompanyQueryConfig.retrieve
@@ -60,18 +91,29 @@ export const storeCompaniesMiddlewares: MiddlewareRoute[] = [
     method: ["POST"],
     matcher: "/store/companies/:id",
     middlewares: [
+      ensureCompanyAccess({ admin: true }),
+      // Previously missing entirely: the handler spread raw req.body.
+      validateAndTransformBody(StoreUpdateCompany),
       validateAndTransformQuery(
         StoreGetCompanyParams,
         storeCompanyQueryConfig.retrieve
       ),
     ],
   },
+  {
+    // Previously had NO entry, so any authenticated customer could delete any
+    // company.
+    method: ["DELETE"],
+    matcher: "/store/companies/:id",
+    middlewares: [ensureCompanyAccess({ admin: true })],
+  },
 
-  /* Employee middlewares */
+  /* Employees */
   {
     method: ["GET"],
     matcher: "/store/companies/:id/employees",
     middlewares: [
+      ensureCompanyAccess(),
       validateAndTransformQuery(
         StoreGetEmployeeParams,
         storeEmployeeQueryConfig.list
@@ -82,7 +124,7 @@ export const storeCompaniesMiddlewares: MiddlewareRoute[] = [
     method: ["POST"],
     matcher: "/store/companies/:id/employees",
     middlewares: [
-      ensureRole("company_admin"),
+      ensureCompanyAccess({ admin: true }),
       validateAndTransformBody(StoreCreateEmployee),
       validateAndTransformQuery(
         StoreGetEmployeeParams,
@@ -92,8 +134,10 @@ export const storeCompaniesMiddlewares: MiddlewareRoute[] = [
   },
   {
     method: ["GET"],
-    matcher: "/store/companies/:id/employees/:employee_id",
+    matcher: "/store/companies/:id/employees/:employeeId",
     middlewares: [
+      ensureCompanyAccess(),
+      ensureEmployeeInCompany(),
       validateAndTransformQuery(
         StoreGetEmployeeParams,
         storeEmployeeQueryConfig.retrieve
@@ -102,9 +146,10 @@ export const storeCompaniesMiddlewares: MiddlewareRoute[] = [
   },
   {
     method: ["POST"],
-    matcher: "/store/companies/:id/employees/:employee_id",
+    matcher: "/store/companies/:id/employees/:employeeId",
     middlewares: [
-      ensureRole("company_admin"),
+      ensureCompanyAccess({ admin: true }),
+      ensureEmployeeInCompany(),
       validateAndTransformBody(StoreUpdateEmployee),
       validateAndTransformQuery(
         StoreGetEmployeeParams,
@@ -113,10 +158,21 @@ export const storeCompaniesMiddlewares: MiddlewareRoute[] = [
     ],
   },
   {
+    // Previously had NO entry.
+    method: ["DELETE"],
+    matcher: "/store/companies/:id/employees/:employeeId",
+    middlewares: [
+      ensureCompanyAccess({ admin: true }),
+      ensureEmployeeInCompany(),
+    ],
+  },
+
+  /* Approval settings */
+  {
     method: ["POST"],
     matcher: "/store/companies/:id/approval-settings",
     middlewares: [
-      ensureRole("company_admin"),
+      ensureCompanyAccess({ admin: true }),
       validateAndTransformBody(StoreUpdateApprovalSettings),
     ],
   },

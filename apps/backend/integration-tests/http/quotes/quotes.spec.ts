@@ -91,7 +91,12 @@ medusaIntegrationTestRunner({
               ],
               summary: expect.objectContaining({
                 paid_total: 0,
-                difference_sum: 0,
+                // `difference_sum` was removed from the core order summary in
+                // the Medusa 2.19 -> 2.21 upgrades (79138a5, 6f7df83, 9c4e3bf).
+                // The string does not appear anywhere in the installed
+                // dependency tree, so this assertion could never pass on this
+                // version. Asserting a field the framework no longer emits is
+                // a stale test, not a product defect.
                 refunded_total: 0,
                 transaction_total: 0,
                 pending_difference: 100,
@@ -130,17 +135,16 @@ medusaIntegrationTestRunner({
         );
       });
 
-      it("should throw error when quote does not exist", async () => {
-        const {
-          response: { data },
-        } = await api
+      // P0-SEC-1 behaviour change: 404 -> 403.
+      // The previous 404 body even echoed the requested id back. Quote ids are
+      // now protected the same way company ids are: an unknown quote and
+      // another customer's quote are indistinguishable to the caller.
+      it("returns a uniform denial when the quote does not exist", async () => {
+        const { response } = await api
           .get(`/store/quotes/does-not-exist`, storeHeaders)
           .catch((e) => e);
 
-        expect(data).toEqual({
-          type: "not_found",
-          message: "Quote id not found: does-not-exist",
-        });
+        expect(response.status).toEqual(403);
       });
     });
 

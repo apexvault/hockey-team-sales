@@ -34,11 +34,13 @@ yarn-debug.log*
 yarn-error.log*
 
 # Local env files
-**/.env
-**/.env.local
-**/.env.development.local
-**/.env.test.local
-**/.env.production.local
+# Ignore every .env* variant, then re-allow the committed templates.
+# Previously .env.test / .env.production / .env.staging were NOT ignored, and
+# Medusa's jest setup loads .env.test -- so a developer creating one would have
+# committed real credentials silently. See DAY_0_AUDIT.md F-20.
+**/.env*
+!**/.env.template
+!**/.env.example
 
 # Turbo
 .turbo

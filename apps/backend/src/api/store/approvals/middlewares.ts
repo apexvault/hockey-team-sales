@@ -1,63 +1,52 @@
-import { ContainerRegistrationKeys } from "@medusajs/framework/utils"
 import {
   authenticate,
-  AuthenticatedMedusaRequest,
-  MedusaNextFunction,
-  MedusaResponse,
   validateAndTransformBody,
   validateAndTransformQuery,
 } from "@medusajs/framework";
 import { MiddlewareRoute } from "@medusajs/medusa";
-import { ensureRole } from "../../middlewares/ensure-role";
-import { ApprovalType } from "../../../types/approval";
+import {
+  attachCompanyScope,
+  ensureApprovalAccess,
+  ensureCompanyAdmin,
+} from "../../middlewares/ensure-company-access";
 import { approvalTransformQueryConfig } from "./query-config";
 import { StoreGetApprovals, StoreUpdateApproval } from "./validators";
 
-const ensureApprovalType = async (
-  req: AuthenticatedMedusaRequest,
-  res: MedusaResponse,
-  next: MedusaNextFunction
-) => {
-  const { id } = req.params;
-
-  const query = req.scope.resolve(ContainerRegistrationKeys.QUERY);
-
-  const {
-    data: [approval],
-  } = await query.graph({
-    entity: "approval",
-    fields: ["type"],
-    filters: { id },
-  });
-
-  if (!approval) {
-    res.status(404).json({ message: "Approval not found" });
-    return;
-  }
-
-  const approvalType = approval.type as unknown as ApprovalType;
-
-  if (approvalType !== ApprovalType.ADMIN) {
-    res.status(403).json({ message: "Forbidden" });
-    return;
-  }
-
-  next();
-};
-
+/**
+ * P0-SEC-1.
+ *
+ * Previously the `ALL /store/approvals*` entry applied `ensureRole("company_admin")`
+ * globally. That matcher has no `:id` segment, so `ensureRole` read
+ * `req.params.id === undefined` and issued an unfiltered company query -- which
+ * returned an arbitrary company rather than none. If that company happened to
+ * have no employees, the old bootstrap branch granted access to every caller on
+ * every request.
+ *
+ * The role check is now split:
+ *   - collection routes use `ensureCompanyAdmin`, which reads no path param at
+ *     all and derives the company purely from the caller's membership;
+ *   - `POST /store/approvals/:id` additionally uses `ensureApprovalAccess`,
+ *     which resolves approval -> cart -> company and requires it to match the
+ *     caller's company, and forbids self-approval.
+ *
+ * The old `ensureApprovalType` helper is folded into `ensureApprovalAccess`,
+ * which returns a uniform 403 rather than distinguishing "not found" from
+ * "forbidden" -- the previous 404 let a caller probe which approval ids exist.
+ */
 export const storeApprovalsMiddlewares: MiddlewareRoute[] = [
   {
     method: "ALL",
     matcher: "/store/approvals*",
     middlewares: [
       authenticate("customer", ["session", "bearer"]),
-      ensureRole("company_admin"),
+      attachCompanyScope,
     ],
   },
   {
     method: ["GET"],
     matcher: "/store/approvals",
     middlewares: [
+      ensureCompanyAdmin(),
       validateAndTransformQuery(
         StoreGetApprovals,
         approvalTransformQueryConfig
@@ -68,7 +57,7 @@ export const storeApprovalsMiddlewares: MiddlewareRoute[] = [
     method: ["POST"],
     matcher: "/store/approvals/:id",
     middlewares: [
-      ensureApprovalType,
+      ensureApprovalAccess(),
       validateAndTransformBody(StoreUpdateApproval),
     ],
   },
