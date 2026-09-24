@@ -1,4 +1,5 @@
 export * from "./create-companies";
+export * from "./create-company-with-founder";
 export * from "./update-companies";
 export * from "./delete-companies";
 export * from "./add-company-to-customer-group";

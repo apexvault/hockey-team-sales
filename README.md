@@ -1,3 +1,19 @@
+> ## ⛔ PAUSED — REFERENCE ONLY
+>
+> **Owner decision, 2026-09-23.** This application is paused;
+> `rbk-team-sales` is the primary Apex Apparel platform. This repository is kept
+> as a reference implementation and audit record.
+>
+> It is **prohibited** from receiving real users, guest traffic, payments,
+> rosters, minors' data, or production deployment. Four security findings are
+> open (F-42, F-43, F-37, F-38).
+>
+> Start with **[`PROJECT_STATUS.md`](PROJECT_STATUS.md)** — it carries the
+> prohibition list, the open findings, the required branch/merge order, and
+> step-by-step resume instructions. Local setup is in
+> [`CONTRIBUTING.md`](CONTRIBUTING.md); the security register is
+> [`SECURITY_FINDINGS.md`](SECURITY_FINDINGS.md).
+
 <p align="center">
   <a href="https://www.medusajs.com">
   <picture>

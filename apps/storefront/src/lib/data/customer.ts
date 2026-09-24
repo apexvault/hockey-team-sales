@@ -8,7 +8,7 @@ import { track } from "@vercel/analytics/server"
 import { revalidateTag } from "next/cache"
 import { redirect } from "next/navigation"
 import { retrieveCart, updateCart } from "./cart"
-import { createCompany, createEmployee } from "./companies"
+import { createCompany } from "./companies"
 import {
   getAuthHeaders,
   getCacheOptions,
@@ -104,16 +104,18 @@ export async function signup(_currentState: unknown, formData: FormData) {
       currency_code: formData.get("currency_code") as string,
     }
 
+    // The founding employee is created server-side, inside the same workflow
+    // as the company (createCompanyWithFounderWorkflow), from the authenticated
+    // identity.
+    //
+    // Previously the client made a second call to create the employee with
+    // `is_admin: true`. That left the company briefly existing with zero
+    // employees, which the old `ensureRole` middleware treated as grounds to
+    // skip its check -- so every signup walked through that gap and was granted
+    // a company_admin role that was never scoped to a company. Doing it
+    // server-side removes both the window and the client's ability to nominate
+    // who becomes an admin.
     const createdCompany = await createCompany(companyForm)
-
-    const createdEmployee = await createEmployee({
-      company_id: createdCompany?.id as string,
-      customer_id: createdCustomer.id,
-      is_admin: true,
-      spending_limit: 0,
-    }).catch((err) => {
-      console.log("error creating employee", err)
-    })
 
     const cacheTag = await getCacheTag("customers")
     revalidateTag(cacheTag)
@@ -123,7 +125,6 @@ export async function signup(_currentState: unknown, formData: FormData) {
     return {
       customer: createdCustomer,
       company: createdCompany,
-      employee: createdEmployee,
     }
   } catch (error: any) {
     console.log("error", error)

@@ -14,7 +14,11 @@ module.exports = {
   },
   testEnvironment: "node",
   moduleFileExtensions: ["js", "ts", "json"],
-  modulePathIgnorePatterns: ["dist/"],
+  // `.medusa/server` holds compiled build output. Without it here, jest
+  // collects every spec twice -- once from src, once from a stale compiled
+  // twin that can silently diverge from source -- so `test:unit` reported
+  // double the real test count.
+  modulePathIgnorePatterns: ["dist/", ".medusa/"],
   setupFiles: ["./integration-tests/setup.js"],
 };
 
