@@ -106,6 +106,15 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Lint
+        env:
+          # `next lint` runs apps/storefront/check-env-variables.js first, which
+          # hard-fails on a missing publishable key. Lint makes no network call,
+          # so a placeholder is sufficient -- but without it the job fails for a
+          # reason that has nothing to do with lint. A local .env.local hid this
+          # until CI ran.
+          NEXT_PUBLIC_MEDUSA_PUBLISHABLE_KEY: pk_ci_lint_placeholder
+          NEXT_PUBLIC_MEDUSA_BACKEND_URL: http://localhost:9000
+          NEXT_PUBLIC_BASE_URL: http://localhost:8000
         run: pnpm lint
 
   # ---------------------------------------------------------------------------
@@ -360,7 +369,16 @@ jobs:
         working-directory: apps/backend
         run: |
           set -euo pipefail
-          npx medusa start > "${RUNNER_TEMP}/medusa.log" 2>&1 &
+          # `medusa develop`, not `medusa start`. In Medusa v2 `medusa build`
+          # emits a standalone deployable at .medusa/server, and `medusa start`
+          # expects to be run FROM that directory -- run from the project root
+          # it cannot find the admin build and exits with
+          # "Could not find index.html in the admin build directory".
+          # The storefront build only needs a reachable backend, and the
+          # production build itself is already verified by the `Build backend`
+          # step plus the artefact assertion below. Exercising the standalone
+          # start path belongs to the staging deployment task (P1-REL-1).
+          npx medusa develop > "${RUNNER_TEMP}/medusa.log" 2>&1 &
           echo $! > "${RUNNER_TEMP}/medusa.pid"
 
           for i in $(seq 1 60); do
