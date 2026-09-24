@@ -485,12 +485,18 @@ medusaIntegrationTestRunner({
       });
 
       /**
-       * The LAST_EMPLOYEE rule is gone by owner decision: removing the final
-       * member is permitted, because an organization with no members has no
-       * administrator to protect. This pins the reversal so the broader rule
-       * cannot creep back in.
+       * The LAST_EMPLOYEE rule is gone by owner decision D-016, but that does
+       * NOT mean a solo organization can offboard itself. The last remaining
+       * member is necessarily an administrator, so the LAST_ADMINISTRATOR guard
+       * still refuses -- and no other state is reachable, because both the
+       * delete and demote paths prevent getting there.
+       *
+       * Named for what it asserts. An earlier version of this test was called
+       * "permits removing the final member" while asserting a 409, which would
+       * have led the next reader to believe a capability exists that does not.
+       * Winding an organization down needs the archive/closure workflow (D-018).
        */
-      it("permits removing the final member of a company", async () => {
+      it("still refuses when the final member is also the last administrator", async () => {
         const solo = await registerCustomerWithCompany(
           "captain@solo-offboard.test",
           "Solo Wolverines"
@@ -504,6 +510,7 @@ medusaIntegrationTestRunner({
         ).data.employees;
 
         expect(employees).toHaveLength(1);
+        expect(employees[0].is_admin).toBe(true);
 
         const res = await api
           .delete(
@@ -512,9 +519,6 @@ medusaIntegrationTestRunner({
           )
           .catch((e) => e.response);
 
-        // Refused only if they are an administrator -- which the founder is.
-        // Succession, or the future archive/closure workflow, is the intended
-        // path. Asserted explicitly so the distinction is not lost.
         expect(res.status).toBe(409);
         expect(res.data.code).toBe("LAST_ADMINISTRATOR");
       });

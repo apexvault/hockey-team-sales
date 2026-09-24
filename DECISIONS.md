@@ -38,9 +38,9 @@
 | ID | Decision | Status | Implementation |
 |---|---|---|---|
 | D-015 | A customer may belong to and manage **multiple** companies, organizations or teams. | **Approved** | **NOT YET IMPLEMENTED** — see the design gate below |
-| D-016 | Replace the broad `LAST_EMPLOYEE` policy with a `LAST_ADMINISTRATOR` policy. | **Approved** | **DONE** — removing the final *member* is permitted; only removing or demoting the last *administrator* is refused |
+| D-016 | Replace the broad `LAST_EMPLOYEE` policy with a `LAST_ADMINISTRATOR` policy. | **Approved** | **DONE** — only removing or demoting the last *administrator* is refused. **Correction:** an earlier version of this row said "removing the final member is permitted". That is vacuous — the last remaining member is necessarily an administrator (both guards prevent reaching any other state), so no company can exist in which the final member is removable. The rule is narrower than before, but the one-person offboarding gap it appeared to close is **not** closed; see D-018. |
 | D-017 | An organization cannot be left active without an administrator. | **Approved** | **DONE** — enforced on both the delete and demote paths |
-| D-018 | The final administrator must appoint a replacement, or use a future controlled archive/closure workflow. | **Approved** | **PARTIAL** — succession works and is tested; the archive/closure workflow does not exist, so there is currently no self-service way to wind an organization down |
+| D-018 | The final administrator must appoint a replacement, or use a future controlled archive/closure workflow. | **Approved** | **PARTIAL — and this is the accurate statement of where things stand.** Succession works and is tested (appoint a replacement admin, then the founder can be removed). The archive/closure workflow does not exist, so a one-person organization still has **no self-service way to wind down**. That is the intended policy per decision 4, not a defect — but it must not be described as solved. |
 | D-019 | Do not hard-code a one-customer/one-company assumption. | **Approved** | **NOT YET IMPLEMENTED** — current code violates this; see below |
 | D-020 | No real roster data for minors may be loaded until verified invitation/consent is implemented **and reviewed**. | **Approved** | Gate recorded; F-35 / P1-COM-1 is the implementing task |
 

@@ -325,6 +325,23 @@ medusaIntegrationTestRunner({
 
         const cart = await createOwnedCart(wolverines);
 
+        // Read the company LINK directly through the container. The store cart
+        // route does not expose `company` as a selectable field, and asserting
+        // customer_id alone would only duplicate the takeover tests above.
+        const linkedCompanyId = async () => {
+          const query = getContainer().resolve("query");
+          const { data } = await query.graph({
+            entity: "cart",
+            fields: ["id", "company.id"],
+            filters: { id: cart.id },
+          });
+          return (data?.[0] as any)?.company?.id;
+        };
+
+        // Precondition: the cart is linked to the Wolverines before the attack,
+        // otherwise "the link was preserved" would be vacuously true.
+        expect(await linkedCompanyId()).toBe(wolverines.company.id);
+
         const res = await api
           .post(`/store/carts/${cart.id}/customer`, {}, storm.headers)
           .catch((e) => e.response);
@@ -333,8 +350,13 @@ medusaIntegrationTestRunner({
         const after = (
           await api.get(`/store/carts/${cart.id}`, wolverines.headers)
         ).data.cart;
-
         expect(after.customer_id).toBe(wolverines.customer.id);
+
+        // The actual company-link assertion. A successful takeover would have
+        // moved this to Storm via the link-repair subscriber.
+        const companyAfter = await linkedCompanyId();
+        expect(companyAfter).toBe(wolverines.company.id);
+        expect(companyAfter).not.toBe(storm.company.id);
       });
 
       it("keeps a pending approval in the owning team's queue", async () => {

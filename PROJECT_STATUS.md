@@ -3,12 +3,12 @@
 ## Executive status
 
 - Phase: Wave 0 — Make the baseline trustworthy
-- State: **ACTIVE** — Day 0 COMPLETE and accepted; P0-SEC-1 implemented, in independent review
+- State: **ACTIVE** — Day 0, P0-SEC-1 and P0-INF-1 complete and reviewed; P0-SEC-7 (cart ownership) implemented and in review
 - Overall beta completion: **~12–18%** of the hockey beta path (method and
   confidence in `DAY_0_AUDIT.md` §10). Hockey-specific code: **0%**.
 - Current owner blocker: 7 owner gates open (see below) — none block the first P0 task
 - Production status: No deployment authorized; **no deployment mechanism exists**
-- Next milestone: Wave 0 complete — remaining: **P0-INF-1 (CI)**, P0-INF-2 (toolchain), P0-2 (residual fixture debt), P0-SEC-6 (secrets), **P0-SEC-7 (new — cart-transfer ownership, before beta)**
+- Next milestone: Wave 0 complete — remaining: **branch protection (owner gate 0)**, P0-INF-2 (toolchain), P0-2 (residual fixture debt), P0-SEC-6 (secrets), P0-SEC-7 remainder (F-36/F-37/F-38)
 
 ## Day 0 tracker
 
@@ -47,11 +47,7 @@
    Until it is done, every guarantee below is advisory.
 2. **No deployment, backup, monitoring, or rollback mechanism exists anywhere.**
 3. Artwork/proof/roster/production are ~0% built and sit on the critical path.
-4. **`POST /store/carts/:id/customer` has no ownership check** (F-41) — any
-   authenticated customer with a cart id can transfer that cart to themselves and
-   read its contents, which now also moves the cart's company link. Gated only by
-   ULID entropy. **P0-SEC-7, before beta.**
-5. Admin surface still has no role granularity — any staff login sees every
+4. Admin surface still has no role granularity — any staff login sees every
    team's data (F-18, **P0-ROLE-1**).
 5. `JWT_SECRET` may be empty, in which case Medusa silently falls back to the
    literal `"supersecret"` outside production (F-20, **P0-SEC-6**).
@@ -60,14 +56,17 @@
 7. Employee↔customer duplication is still possible under a race; it needs a DB
    unique constraint (F-34, **P2-DATA-1**). A duplicate would let membership
    resolve to an arbitrary company.
-8. A one-person team currently has no self-service offboarding path: the
-   `LAST_EMPLOYEE` guard blocks removing the only member, and a customer already
-   affiliated cannot found another company. Deliberate, but an **owner policy
-   decision** to confirm.
+8. **A one-person organization still has no self-service offboarding path.** The
+   `LAST_ADMINISTRATOR` guard refuses removing or demoting the last administrator,
+   and because the last remaining member is necessarily an administrator, no
+   other state is reachable. Succession works and is tested; winding down does
+   not, pending the archive/closure workflow (D-018). This is the intended
+   policy per owner decision 4, not a defect — recorded so it is not mistaken
+   for solved.
 
-Closed since the last report: soft-delete revocation (F-39) is no longer an open
-question — an integration test now proves a removed employee's still-valid token
-is refused.
+Closed since the last report: F-41 (cart-ID-as-authority) is fixed by P0-SEC-7
+and mutation-verified. Soft-delete revocation (F-39) was closed the round before
+by an integration test proving a removed employee's still-valid token is refused.
 
 **Retired by P0-SEC-1** (were risks 1-3 and 7): global `company_admin` on signup
 (F-01), React-only approval enforcement (F-06), unauthorized DELETE routes
